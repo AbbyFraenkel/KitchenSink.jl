@@ -1,6 +1,6 @@
-using Test, SafeTestsets
-using Test, SafeTestsets
+using HierarchicalAdaptiveOCFE
+using Test
 
-include("test_includes.jl")
-
-
+@testset "HierarchicalAdaptiveOCFE.jl" begin
+    # Write your tests here.
+end
