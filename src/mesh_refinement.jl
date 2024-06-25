@@ -90,4 +90,4 @@ function find_children(mesh::Mesh, el_idx::Int)::Vector{Int}
     return findall(el -> el.parent == el_idx, mesh.elements)
 end
 
-end # module
+end # module MeshRefinement

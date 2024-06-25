@@ -121,6 +121,7 @@ A structure representing the tensor product mask used in hierarchical polynomial
 # Fields
 - `masks::Vector{SparseMatrixCSC{T, Int}}`: Vector of SparseMatrixCSC representing the tensor product masks.
 """
+
 mutable struct TensorProductMask{T<:AbstractFloat} <: AbstractTensorProductMask
     masks::Vector{SparseMatrixCSC{T,Int}}
 end
@@ -201,6 +202,39 @@ function DecayRate(rates::Vector{T}) where {T<:AbstractFloat}
 
     instance = DecayRate{T}(rates)
     check_fields(instance, "DecayRate")
+
+    return instance
+end
+@doc """
+    AbstractDerivativeMatrix
+
+An abstract type representing a derivative matrix.
+"""
+abstract type AbstractDerivativeMatrix end
+
+# Mutable Structures
+
+@doc """
+    DerivativeMatrix{T<:AbstractFloat}
+
+A structure representing a derivative matrix used for numerical differentiation.
+
+# Fields
+- `matrix::Matrix{T}`: Matrix representing the derivative matrix.
+- `order::Int`: The order of the derivative (e.g., 1 for first derivative, 2 for second derivative, etc.).
+"""
+mutable struct DerivativeMatrix{T<:AbstractFloat} <: AbstractDerivativeMatrix
+    matrix::Matrix{T}
+    order::Int
+end
+
+function DerivativeMatrix(matrix::Matrix{T}, order::Int) where {T<:AbstractFloat}
+    check_is_nothing(matrix, "Derivative matrix")
+    check_empty(matrix, "Derivative matrix")
+    check_positive(order, "Order of derivative")
+
+    instance = DerivativeMatrix{T}(matrix, order)
+    check_fields(instance, "DerivativeMatrix")
 
     return instance
 end
