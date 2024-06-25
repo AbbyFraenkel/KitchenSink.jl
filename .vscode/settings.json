@@ -1,5 +1,6 @@
 {
     "workbench.colorCustomizations": {
+<<<<<<< Updated upstream
         "activityBar.activeBackground": "#97286a",
         "activityBar.background": "#97286a",
         "activityBar.foreground": "#e7e7e7",
@@ -21,4 +22,26 @@
     },
     "peacock.color": "#6f1d4e",
     "CodeGPT.apiKey": "CodeGPT Plus Beta"
+=======
+        "activityBar.activeBackground": "#b2bc99",
+        "activityBar.background": "#b2bc99",
+        "activityBar.foreground": "#15202b",
+        "activityBar.inactiveForeground": "#15202b99",
+        "activityBarBadge.background": "#587987",
+        "activityBarBadge.foreground": "#e7e7e7",
+        "commandCenter.border": "#15202b99",
+        "sash.hoverBorder": "#b2bc99",
+        "statusBar.background": "#9ba87a",
+        "statusBar.foreground": "#15202b",
+        "statusBarItem.hoverBackground": "#82905f",
+        "statusBarItem.remoteBackground": "#9ba87a",
+        "statusBarItem.remoteForeground": "#15202b",
+        "tab.activeBorder": "#b2bc99",
+        "titleBar.activeBackground": "#9ba87a",
+        "titleBar.activeForeground": "#15202b",
+        "titleBar.inactiveBackground": "#9ba87a99",
+        "titleBar.inactiveForeground": "#15202b99"
+    },
+    "peacock.color": "#9ba87a"
+>>>>>>> Stashed changes
 }
