@@ -13,21 +13,23 @@ export AbstractSystem, AbstractMesh, AbstractProblem, AbstractElement, AbstractT
 export AbstractConstraint, AbstractBoundaryCondition, AbstractObjectiveFunction
 export AbstractCostFunction, AbstractTensorProductMask, AbstractLocationMatrix
 export AbstractRefinementStrategy, AbstractErrorEstimator, AbstractIntegrationKernel
-export HierarchicalBasisFunction, DecayRate, TensorProductMask, LocationMatrix
-export AbstractBasisFunction, AbstractHeiricialBasisFunction
+export AbstractBasisFunction, AbstractHierarchicalBasisFunction, AbstractDerivativeMatrix
+export DecayRate, TensorProductMask, LocationMatrix, HierarchicalBasisFunction, DerivativeMatrix
 
 # Export Mesh Types
 include("meshes.jl")
-export Connectivity, Node, BasisFunction, Element, HierarchicalElement, Mesh, HierarchicalGridLayer, Connectivity
-export HRefinement, PRefinement, HPRefinement
+export Connectivity, Node, BasisFunction, Element, HierarchicalElement, Mesh
+export HRefinement, PRefinement, HPRefinement, HierarchicalGridLayer
 
 # Export Problem Types
 include("problems.jl")
-export Equation, Domain, DirichletCondition, NeumannCondition, RobinCondition, BoundaryCondition, Weights, TimeSpan, DifferentialVars
+export Equation, Domain, DirichletCondition, NeumannCondition, RobinCondition
+export BoundaryCondition, Weights, TimeSpan, DifferentialVars
 
 # Export Solver Types
 include("solvers.jl")
-export Solver, TimeSteppingSolver, OptimalControlSolver, SolverLog, SolverMonitor, ParallelOptions, DerivativeRecovery
+export Solver, TimeSteppingSolver, OptimalControlSolver, SolverLog, SolverMonitor
+export ParallelOptions, DerivativeRecovery
 
 # Export Error Estimator Types
 include("error_estimation.jl")

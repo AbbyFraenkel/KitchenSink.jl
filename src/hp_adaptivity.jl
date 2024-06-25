@@ -15,7 +15,7 @@ function hp_adaptivity_solver(
     initial_solution::Vector{Float64},
 )::Vector{Float64}
     solution = initial_solution
-    for iter = 1:solver.max_iterations
+    for iter in 1:solver.max_iterations
         system = assemble_system(problem)
         solution = system.A \ system.b
         error_estimates = compute_error_estimates(
@@ -39,11 +39,11 @@ function hp_adaptivity_solver(
 end
 
 function goal_oriented_refinement(
-    elements::Vector{Element},
+    elements::Vector{Element{Float64}},
     goal_quantity::Function,
     tolerance::Float64,
-)::Vector{Element}
-    refined_elements = Element[]
+)::Vector{Element{Float64}}
+    refined_elements = Element{Float64}[]
     for el in elements
         error = estimate_error(el, goal_quantity)
         if error > tolerance
@@ -76,8 +76,8 @@ function assemble_system(problem::Problem)::System
     A = spzeros(Float64, problem.num_elements * num_basis, problem.num_elements * num_basis)
     b = zeros(Float64, problem.num_elements * num_basis)
 
-    Threads.@threads for i = 1:problem.num_elements
-        for j = 1:num_basis
+    Threads.@threads for i in 1:problem.num_elements
+        for j in 1:num_basis
             A[i, j] = integrate_basis(
                 length(problem.domain),
                 problem.domain,
@@ -107,7 +107,7 @@ function compute_error_estimates(
 )::Vector{Float64}
     error_estimates = zeros(Float64, length(solution))
 
-    Threads.@threads for i = 1:length(solution)
+    Threads.@threads for i in 1:length(solution)
         error_estimates[i] =
             norm(solution[i] - basis_functions[i](collocation_points[i])) * weights[i]
     end
@@ -115,17 +115,22 @@ function compute_error_estimates(
     return error_estimates
 end
 
-function refine_element(el::Element)::Vector{Element}
+function refine_element(el::Element{Float64})::Vector{Element{Float64}}
     new_elements = [
-        Element(
+        Element{Float64}(
             el.nodes,
             el.basis_functions,
             el.active_basis_indices,
+            el.removable_basis_indices,
             el.parent,
             el.level + 1,
-        ) for _ = 1:2
+            el.tensor_product_masks,
+            el.location_matrix,
+            el.error_estimate,
+            el.boundary_information,
+        ) for _ in 1:2
     ]
     return new_elements
 end
 
-end # module
+end # module HPAdaptivity
