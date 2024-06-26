@@ -1,4 +1,3 @@
-# using DocStringExtensions
 @doc """
     ResidualErrorEstimator{T<:AbstractFloat}
 

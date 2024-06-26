@@ -18,7 +18,7 @@ export DecayRate, TensorProductMask, LocationMatrix, HierarchicalBasisFunction, 
 
 # Export Mesh Types
 include("meshes.jl")
-export Connectivity, Node, BasisFunction, Element, HierarchicalElement, Mesh
+export Connectivity, Node, CollocationPoint, BasisFunction, Element, HierarchicalElement, Mesh
 export HRefinement, PRefinement, HPRefinement, HierarchicalGridLayer
 
 # Export Problem Types

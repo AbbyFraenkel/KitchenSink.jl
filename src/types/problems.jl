@@ -1,4 +1,4 @@
-
+# Mutable Structures
 
 @doc """
     Equation{T<:AbstractFloat}
@@ -10,6 +10,23 @@ A structure representing a differential equation.
 """
 mutable struct Equation{T}
     equation::Function
+end
+
+@doc """
+    Equation(equation::Function) where {T<:AbstractFloat}
+
+Create a new `Equation` instance.
+
+# Arguments
+- `equation::Function`: The differential equation function.
+
+# Returns
+- An `Equation` instance.
+"""
+function Equation(equation::Function)
+    instance = Equation{T}(equation)
+    check_fields(instance, "Equation")
+    return instance
 end
 
 @doc """
@@ -177,6 +194,24 @@ mutable struct BoundaryCondition{T<:AbstractFloat}
 end
 
 @doc """
+    BoundaryCondition(condition::AbstractBoundaryCondition) where {T<:AbstractFloat}
+
+Create a new `BoundaryCondition` instance.
+
+# Arguments
+- `condition::AbstractBoundaryCondition`: The boundary condition.
+
+# Returns
+- A `BoundaryCondition` instance.
+"""
+function BoundaryCondition(condition::AbstractBoundaryCondition) where {T<:AbstractFloat}
+    instance = BoundaryCondition{T}(condition)
+    check_fields(instance, "BoundaryCondition")
+
+    return instance
+end
+
+@doc """
     Weights{T<:AbstractFloat}
 
 A structure representing the integration weights.
@@ -245,6 +280,7 @@ function TimeSpan(span::Vector{T}) where {T<:AbstractFloat}
 
     return instance
 end
+
 @doc """
     DifferentialVars
 
@@ -255,10 +291,25 @@ A structure representing differential variables.
 """
 mutable struct DifferentialVars
     vars::Vector{Bool}
-
-    function DifferentialVars(vars::Vector{Bool})
-        isempty(vars) && throw(ArgumentError("vars cannot be empty"))
-        new(vars)
-    end
 end
 
+@doc """
+    DifferentialVars(vars::Vector{Bool})
+
+Create a new `DifferentialVars` instance.
+
+# Arguments
+- `vars::Vector{Bool}`: Vector of boolean values indicating differential variables.
+
+# Returns
+- A `DifferentialVars` instance.
+
+# Errors
+- Throws an `ArgumentError` if `vars` are empty.
+"""
+function DifferentialVars(vars::Vector{Bool})
+    isempty(vars) && throw(ArgumentError("vars cannot be empty"))
+
+    instance = DifferentialVars(vars)
+    return instance
+end

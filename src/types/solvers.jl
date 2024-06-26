@@ -1,10 +1,13 @@
-# using DocStringExtensions
+# Abstract Types
+
 @doc """
-    Solver
+    AbstractSolver
 
 An abstract type representing a solver.
 """
 abstract type AbstractSolver end
+
+# Mutable Structures
 
 @doc """
     TimeSteppingSolver
@@ -74,7 +77,7 @@ Create a new `OptimalControlSolver` instance.
 # Errors
 - Throws an `ArgumentError` if `tolerance` or `max_iterations` are not positive.
 """
-function OptimalControlSolver(tolerance::T, max_iterations::Int) where {T <: AbstractFloat}
+function OptimalControlSolver(tolerance::T, max_iterations::Int) where {T<:AbstractFloat}
     check_positive(tolerance, "Tolerance")
     check_positive(max_iterations, "Maximum iterations")
 
@@ -154,7 +157,7 @@ Create a new `SolverMonitor` instance.
 - Throws an `ArgumentError` if `logs` are empty.
 """
 function SolverMonitor(logs::T) where {T<:AbstractVector}
-    # check_non_empty_elements(logs, "Solver logs")
+    check_non_empty_elements(logs, "Solver logs")
 
     instance = SolverMonitor{T}(logs)
     check_fields(instance, "SolverMonitor")
@@ -172,9 +175,9 @@ A structure representing parallel options for solvers.
 - `num_threads::Int`: Number of threads to use.
 - `solver_type::Symbol`: Type of solver (:mpi, :openmp, etc.).
 """
-mutable struct ParallelOptions{T<:AbstractFloat}
+mutable struct ParallelOptions
     use_parallel::Bool
-    num_threads::T
+    num_threads::Int
     solver_type::Symbol
 end
 
@@ -194,17 +197,17 @@ Create a new `ParallelOptions` instance.
 # Errors
 - Throws an `ArgumentError` if `num_threads` is not positive.
 """
-function ParallelOptions(use_parallel::Bool, num_threads::T, solver_type::Symbol) where {T<:AbstractFloat}
+function ParallelOptions(use_parallel::Bool, num_threads::Int, solver_type::Symbol)
     check_positive(num_threads, "Number of threads")
 
-    instance = ParallelOptions{T}(use_parallel, num_threads, solver_type)
+    instance = ParallelOptions(use_parallel, num_threads, solver_type)
     check_fields(instance, "ParallelOptions")
 
     return instance
 end
 
 @doc """
-    DerivativeRecovery{T<:AbstractFloat}
+    DerivativeRecovery
 
 A structure representing derivative recovery.
 

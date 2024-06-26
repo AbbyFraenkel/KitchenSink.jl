@@ -1,4 +1,4 @@
-module KitchenSink
+
 
 
 include("types/Types.jl")
@@ -12,6 +12,3 @@ include("optimalControlProblems/OptimalControlProblems.jl")
 include("meshManagement/MeshManagement.jl")
 include("discretization/Discretization.jl")
 include("timeStepping/TimeStepping.jl")
-
-
-end
