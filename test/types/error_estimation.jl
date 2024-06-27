@@ -21,9 +21,15 @@ using KitchenSink.Types
         goal_functional(x) = x
         @testset "Construction" begin
             @testset "Error Handling" begin
-                @test_throws ArgumentError GoalOrientedErrorEstimator(goal_functional, Float64[])
+                @test_throws ArgumentError GoalOrientedErrorEstimator(
+                    goal_functional,
+                    Float64[],
+                )
                 @test_throws MethodError GoalOrientedErrorEstimator(nothing, [0.1, 0.2])
-                @test_throws MethodError GoalOrientedErrorEstimator(goal_functional, nothing)
+                @test_throws MethodError GoalOrientedErrorEstimator(
+                    goal_functional,
+                    nothing,
+                )
                 @test_throws MethodError GoalOrientedErrorEstimator()
             end
             @testset "Correct Outputs" begin

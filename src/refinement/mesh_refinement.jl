@@ -30,7 +30,7 @@ function refine_element(el::Element{Float64})::Vector{Element{Float64}}
             el.location_matrix,
             el.error_estimate,
             el.boundary_information,
-        ) for _ in 1:2
+        ) for _ = 1:2
     ]
     return new_elements
 end

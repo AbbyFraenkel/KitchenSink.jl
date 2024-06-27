@@ -235,7 +235,10 @@ Create a new `DerivativeRecovery` instance.
 # Errors
 - Throws an `ArgumentError` if `recovered_derivatives` are empty or `recovery_method` is `nothing`.
 """
-function DerivativeRecovery(recovery_method::Function, recovered_derivatives::Vector{T}) where {T<:AbstractFloat}
+function DerivativeRecovery(
+    recovery_method::Function,
+    recovered_derivatives::Vector{T},
+) where {T<:AbstractFloat}
     check_non_empty_elements(recovered_derivatives, "Recovered derivatives")
     check_is_nothing(recovery_method, "Recovery method")
 

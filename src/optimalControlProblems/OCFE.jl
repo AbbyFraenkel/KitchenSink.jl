@@ -10,7 +10,7 @@ function ocfe_time_step_with_delay(
     history::Function,
     past_times::Vector{Float64},
     past_values::Vector{Float64},
-    interpolation_method::Symbol=:spline,
+    interpolation_method::Symbol = :spline,
 )::Vector{Float64}
     u_next = copy(u)
     for (c, w) in zip(ocfe_config.collocation_points, ocfe_config.weights)

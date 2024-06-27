@@ -2,8 +2,8 @@ function CoordinateDescentRidge(
     A::Matrix{Float64},
     b::Vector{Float64},
     lambda1::Float64,
-    tol::Float64=1e-6,
-    max_iter::Int=1000,
+    tol::Float64 = 1e-6,
+    max_iter::Int = 1000,
 )::Vector{Float64}
     m, n = size(A)
     x = zeros(n)
@@ -28,8 +28,8 @@ function CoordinateDescentLasso(
     A::Matrix{Float64},
     b::Vector{Float64},
     lambda2::Float64,
-    tol::Float64=1e-6,
-    max_iter::Int=1000,
+    tol::Float64 = 1e-6,
+    max_iter::Int = 1000,
 )::Vector{Float64}
     m, n = size(A)
     x = zeros(n)
@@ -62,8 +62,8 @@ function CoordinateDescentElasticNet(
     b::Vector{Float64},
     lambda1::Float64,
     lambda2::Float64,
-    tol::Float64=1e-6,
-    max_iter::Int=1000,
+    tol::Float64 = 1e-6,
+    max_iter::Int = 1000,
 )::Vector{Float64}
     m, n = size(A)
     x = zeros(n)

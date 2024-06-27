@@ -40,12 +40,17 @@ using KitchenSink.Types
     @testset "TensorProductMask" begin
         @testset "Construction" begin
             @testset "Error Handling" begin
-                @test_throws ArgumentError TensorProductMask(Vector{SparseMatrixCSC{Float64,Int}}())
+                @test_throws ArgumentError TensorProductMask(
+                    Vector{SparseMatrixCSC{Float64,Int}}(),
+                )
                 @test_throws MethodError TensorProductMask([nothing])
                 @test_throws MethodError TensorProductMask()
             end
             @testset "Correct Outputs" begin
-                tpm = TensorProductMask([sparse(rand(Float64, 3, 3)), sparse(rand(Float64, 3, 3))])
+                tpm = TensorProductMask([
+                    sparse(rand(Float64, 3, 3)),
+                    sparse(rand(Float64, 3, 3)),
+                ])
                 @test length(tpm.masks) == 2
             end
         end

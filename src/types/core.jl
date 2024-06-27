@@ -225,7 +225,11 @@ mutable struct HierarchicalBasisFunction{T<:AbstractFloat}
     decay_rate::T
 end
 
-function HierarchicalBasisFunction(id::Int, func::Function, decay_rate::T) where {T<:AbstractFloat}
+function HierarchicalBasisFunction(
+    id::Int,
+    func::Function,
+    decay_rate::T,
+) where {T<:AbstractFloat}
     check_positive(id, "ID")
     check_non_negative(decay_rate, "Decay rate")
 
@@ -334,10 +338,19 @@ Create a new `Mesh` instance.
 # Errors
 - Throws an `ArgumentError` if `elements` are empty.
 """
-function Mesh(elements::Vector{Element{T}}, neighbors::Connectivity, levels::Vector{Int}, is_leaf::Vector{Bool}, degrees::Vector{Int}, connectivity::Connectivity, parallel::Bool) where {T<:AbstractFloat}
+function Mesh(
+    elements::Vector{Element{T}},
+    neighbors::Connectivity,
+    levels::Vector{Int},
+    is_leaf::Vector{Bool},
+    degrees::Vector{Int},
+    connectivity::Connectivity,
+    parallel::Bool,
+) where {T<:AbstractFloat}
     check_non_empty_elements(elements, "Elements")
 
-    instance = Mesh{T}(elements, neighbors, levels, is_leaf, degrees, connectivity, parallel)
+    instance =
+        Mesh{T}(elements, neighbors, levels, is_leaf, degrees, connectivity, parallel)
     check_fields(instance, "Mesh")
 
     return instance
@@ -359,7 +372,11 @@ mutable struct FiniteElement <: AbstractElement
     collocation_points::Vector{CollocationPoint}
 end
 
-function FiniteElement(id::Int, nodes::Vector{Node}, collocation_points::Vector{CollocationPoint})
+function FiniteElement(
+    id::Int,
+    nodes::Vector{Node},
+    collocation_points::Vector{CollocationPoint},
+)
     check_positive(id, "ID")
     check_non_empty_elements(nodes, "Nodes")
     check_non_empty_elements(collocation_points, "Collocation points")
@@ -386,7 +403,11 @@ mutable struct HPRefinement <: AbstractRefinementStrategy
     new_orders::Vector{Int}
 end
 
-function HPRefinement(marked_nodes::Vector{Int}, marked_collocation_points::Vector{Int}, new_orders::Vector{Int})
+function HPRefinement(
+    marked_nodes::Vector{Int},
+    marked_collocation_points::Vector{Int},
+    new_orders::Vector{Int},
+)
     check_non_empty_elements(marked_nodes, "Marked nodes")
     check_non_empty_elements(marked_collocation_points, "Marked collocation points")
     check_non_empty_elements(new_orders, "New orders")

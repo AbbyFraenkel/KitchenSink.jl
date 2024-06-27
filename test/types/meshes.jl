@@ -41,11 +41,36 @@ using KitchenSink.Types
         @testset "Construction" begin
             node = Node(1, [0.0, 1.0], nothing, nothing, true)
             bf = BasisFunction(1, test_func, true)
-            tpm = TensorProductMask([sparse(rand(Float64, 3, 3)), sparse(rand(Float64, 3, 3))])
+            tpm = TensorProductMask([
+                sparse(rand(Float64, 3, 3)),
+                sparse(rand(Float64, 3, 3)),
+            ])
             lm = LocationMatrix(sparse(rand(Float64, 3, 3)))
             @testset "Error Handling" begin
-                @test_throws MethodError Element(Float64[], [bf], [1], [1], nothing, 0, tpm, lm, 0.1, Dict())
-                @test_throws MethodError Element([node], Float64[], [1], [1], nothing, 0, tpm, lm, 0.1, Dict())
+                @test_throws MethodError Element(
+                    Float64[],
+                    [bf],
+                    [1],
+                    [1],
+                    nothing,
+                    0,
+                    tpm,
+                    lm,
+                    0.1,
+                    Dict(),
+                )
+                @test_throws MethodError Element(
+                    [node],
+                    Float64[],
+                    [1],
+                    [1],
+                    nothing,
+                    0,
+                    tpm,
+                    lm,
+                    0.1,
+                    Dict(),
+                )
             end
             @testset "Correct Outputs" begin
                 element = Element([node], [bf], [1], [1], nothing, 0, tpm, lm, 0.1, Dict())
@@ -60,7 +85,13 @@ using KitchenSink.Types
     @testset "Node Tests" begin
         @testset "Construction" begin
             @testset "Error Handling" begin
-                @test_throws ArgumentError Node(-1, [0.0, 1.0], true, nothing, Node{Float64}[])
+                @test_throws ArgumentError Node(
+                    -1,
+                    [0.0, 1.0],
+                    true,
+                    nothing,
+                    Node{Float64}[],
+                )
                 @test_throws MethodError Node()
             end
             @testset "Correct Outputs" begin
@@ -95,7 +126,15 @@ using KitchenSink.Types
             is_leaf = [true]
             degrees = [1]
 
-            @test_throws ArgumentError Mesh(elements, connectivity, levels, is_leaf, degrees, connectivity, true)
+            @test_throws ArgumentError Mesh(
+                elements,
+                connectivity,
+                levels,
+                is_leaf,
+                degrees,
+                connectivity,
+                true,
+            )
             @test_throws MethodError Mesh()
         end
 
@@ -111,17 +150,18 @@ using KitchenSink.Types
                     nothing,
                     1,
                     TensorProductMask([sprand(3, 3, 0.5)]),
-                    LocationMatrix(sprand(3, 3, 0.2),),
+                    LocationMatrix(sprand(3, 3, 0.2)),
                     0.0,
-                    Dict()
-                )
+                    Dict(),
+                ),
             ]
             connectivity = Connectivity([[1, 2, 3], [4, 5, 6]])
             levels = [1]
             is_leaf = [true]
             degrees = [1]
 
-            mesh = Mesh(elements, connectivity, levels, is_leaf, degrees, connectivity, true)
+            mesh =
+                Mesh(elements, connectivity, levels, is_leaf, degrees, connectivity, true)
             @test mesh.elements == elements
             @test mesh.connectivity == connectivity
             @test mesh.levels == levels

@@ -14,11 +14,13 @@ export AbstractConstraint, AbstractBoundaryCondition, AbstractObjectiveFunction
 export AbstractCostFunction, AbstractTensorProductMask, AbstractLocationMatrix
 export AbstractRefinementStrategy, AbstractErrorEstimator, AbstractIntegrationKernel
 export AbstractBasisFunction, AbstractHierarchicalBasisFunction, AbstractDerivativeMatrix
-export DecayRate, TensorProductMask, LocationMatrix, HierarchicalBasisFunction, DerivativeMatrix
+export DecayRate,
+    TensorProductMask, LocationMatrix, HierarchicalBasisFunction, DerivativeMatrix
 
 # Export Mesh Types
 include("meshes.jl")
-export Connectivity, Node, CollocationPoint, BasisFunction, Element, HierarchicalElement, Mesh
+export Connectivity,
+    Node, CollocationPoint, BasisFunction, Element, HierarchicalElement, Mesh
 export HRefinement, PRefinement, HPRefinement, HierarchicalGridLayer
 
 # Export Problem Types

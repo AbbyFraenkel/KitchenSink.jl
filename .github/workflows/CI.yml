@@ -44,6 +44,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-julia-${{ matrix.julia-version }}-compiled-
 
+      - name: Install dependencies
+        run: julia --project=@. -e 'using Pkg; Pkg.instantiate()'
+
       - name: Format Julia code
         run: julia --project=@. -e 'using JuliaFormatter; format(".")'
 
