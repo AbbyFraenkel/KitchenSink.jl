@@ -1,1 +1,77 @@
-/Manifest.toml
+# Ignore Julia compiled files
+*.jl.c
+*.ji
+
+# Ignore REPL history file
+.julia_history
+
+# Ignore VS Code workspace settings
+.vscode/
+
+# Ignore Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore temporary files
+*.tmp
+*.log
+
+# Ignore system-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore Julia project-specific files
+manifest.toml
+project.toml
+
+# Ignore backup files
+*.bak
+
+# Ignore test coverage reports
+coverage/
+
+# Ignore documentation build artifacts
+docs/build/
+
+# Ignore binary artifacts
+deps/
+
+# Ignore build artifacts
+build/
+
+# Ignore package tarballs
+*.tar.gz
+
+# Ignore binary files
+*.so
+*.dylib
+*.dll
+
+# Ignore Julia environments
+.julia/environments/*
+
+# Ignore compiled cache
+.julia/compiled/
+
+# Ignore Plots.jl temporary files
+.jlclip_data*
+
+# Ignore binaries from PackageCompiler.jl
+sys*.dylib
+sys*.dll
+sys*.so
+
+# Ignore package tarballs and zip files
+*.tar.gz
+*.zip
+
+# Ignore BinaryProvider artifacts
+.julia/artifacts/*
+
+# Ignore VS Code cache
+.vscode/
+
+# Ignore IntelliJ IDEA project files
+.idea/
+
+# Ignore temporary Julia REPL history files
+.julia/logs/repl_history.jl
