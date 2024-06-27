@@ -118,12 +118,36 @@ Create a new `Element` instance.
 # Errors
 - Throws an `ArgumentError` if `nodes` or `basis_functions` are empty.
 """
-function Element(nodes::Vector{Node{T}}, collocation_points::Vector{CollocationPoint{T}}, basis_functions::Vector{BasisFunction}, active_basis_indices::Vector{Int}, removable_basis_indices::Vector{Int}, parent::Union{Nothing,Element{T}}, level::Int, tensor_product_masks::TensorProductMask{T}, location_matrix::LocationMatrix{T}, error_estimate::T, boundary_information::Dict) where {T<:AbstractFloat}
+function Element(
+    nodes::Vector{Node{T}},
+    collocation_points::Vector{CollocationPoint{T}},
+    basis_functions::Vector{BasisFunction},
+    active_basis_indices::Vector{Int},
+    removable_basis_indices::Vector{Int},
+    parent::Union{Nothing,Element{T}},
+    level::Int,
+    tensor_product_masks::TensorProductMask{T},
+    location_matrix::LocationMatrix{T},
+    error_estimate::T,
+    boundary_information::Dict,
+) where {T<:AbstractFloat}
     check_non_empty_elements(nodes, "Nodes")
     check_non_empty_elements(collocation_points, "Collocation points")
     check_non_empty_elements(basis_functions, "Basis functions")
 
-    instance = Element{T}(nodes, collocation_points, basis_functions, active_basis_indices, removable_basis_indices, parent, level, tensor_product_masks, location_matrix, error_estimate, boundary_information)
+    instance = Element{T}(
+        nodes,
+        collocation_points,
+        basis_functions,
+        active_basis_indices,
+        removable_basis_indices,
+        parent,
+        level,
+        tensor_product_masks,
+        location_matrix,
+        error_estimate,
+        boundary_information,
+    )
     check_fields(instance, "Element", ["parent"])
 
     return instance
@@ -191,12 +215,40 @@ Create a new `HierarchicalElement` instance.
 # Errors
 - Throws an `ArgumentError` if `nodes`, `collocation_points`, or `basis_functions` are empty.
 """
-function HierarchicalElement(nodes::Vector{Node{T}}, collocation_points::Vector{CollocationPoint{T}}, basis_functions::Vector{BasisFunction}, active_basis_indices::Vector{Int}, removable_basis_indices::Vector{Int}, parent::Union{Nothing,HierarchicalElement{T}}, level::Int, refinement_level::Int, tensor_product_masks::SparseMatrixCSC{Int}, location_matrix::SparseMatrixCSC{Int}, children::Vector{HierarchicalElement{T}}, is_leaf::Bool, neighbors::Vector{Int}) where {T<:AbstractFloat}
+function HierarchicalElement(
+    nodes::Vector{Node{T}},
+    collocation_points::Vector{CollocationPoint{T}},
+    basis_functions::Vector{BasisFunction},
+    active_basis_indices::Vector{Int},
+    removable_basis_indices::Vector{Int},
+    parent::Union{Nothing,HierarchicalElement{T}},
+    level::Int,
+    refinement_level::Int,
+    tensor_product_masks::SparseMatrixCSC{Int},
+    location_matrix::SparseMatrixCSC{Int},
+    children::Vector{HierarchicalElement{T}},
+    is_leaf::Bool,
+    neighbors::Vector{Int},
+) where {T<:AbstractFloat}
     check_non_empty_elements(nodes, "Nodes")
     check_non_empty_elements(collocation_points, "Collocation points")
     check_non_empty_elements(basis_functions, "Basis functions")
 
-    instance = HierarchicalElement{T}(nodes, collocation_points, basis_functions, active_basis_indices, removable_basis_indices, parent, level, refinement_level, tensor_product_masks, location_matrix, children, is_leaf, neighbors)
+    instance = HierarchicalElement{T}(
+        nodes,
+        collocation_points,
+        basis_functions,
+        active_basis_indices,
+        removable_basis_indices,
+        parent,
+        level,
+        refinement_level,
+        tensor_product_masks,
+        location_matrix,
+        children,
+        is_leaf,
+        neighbors,
+    )
     check_fields(instance, "HierarchicalElement")
 
     return instance
@@ -259,12 +311,36 @@ Create a new `HierarchicalGridLayer` instance.
 # Errors
 - Throws an `ArgumentError` if `nodes`, `collocation_points`, or `elements` are empty.
 """
-function HierarchicalGridLayer(nodes::Vector{Node{T}}, collocation_points::Vector{CollocationPoint{T}}, elements::Vector{HierarchicalElement{T}}, connectivity::SparseMatrixCSC{Int}, levels::Vector{Int}, is_leaf::Vector{Bool}, degrees::Vector{Int}, parent::Union{Nothing,HierarchicalGridLayer{T}}, children::Vector{HierarchicalGridLayer{T}}, location_matrices::Vector{SparseMatrixCSC{Int}}, hierarchical_relations::Dict{Int,Vector{Int}}) where {T<:AbstractFloat}
+function HierarchicalGridLayer(
+    nodes::Vector{Node{T}},
+    collocation_points::Vector{CollocationPoint{T}},
+    elements::Vector{HierarchicalElement{T}},
+    connectivity::SparseMatrixCSC{Int},
+    levels::Vector{Int},
+    is_leaf::Vector{Bool},
+    degrees::Vector{Int},
+    parent::Union{Nothing,HierarchicalGridLayer{T}},
+    children::Vector{HierarchicalGridLayer{T}},
+    location_matrices::Vector{SparseMatrixCSC{Int}},
+    hierarchical_relations::Dict{Int,Vector{Int}},
+) where {T<:AbstractFloat}
     check_non_empty_elements(nodes, "Nodes")
     check_non_empty_elements(collocation_points, "Collocation points")
     check_non_empty_elements(elements, "Elements")
 
-    instance = HierarchicalGridLayer{T}(nodes, collocation_points, elements, connectivity, levels, is_leaf, degrees, parent, children, location_matrices, hierarchical_relations)
+    instance = HierarchicalGridLayer{T}(
+        nodes,
+        collocation_points,
+        elements,
+        connectivity,
+        levels,
+        is_leaf,
+        degrees,
+        parent,
+        children,
+        location_matrices,
+        hierarchical_relations,
+    )
     check_fields(instance, "HierarchicalGridLayer")
 
     return instance

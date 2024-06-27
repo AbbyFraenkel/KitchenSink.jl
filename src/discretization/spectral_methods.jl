@@ -13,8 +13,8 @@ function EO_matrix_derivative(x)
     D = zeros(n, n)
     w = barycentric_weights(x)
 
-    for i in 2:(n - 1)
-        for j in 1:n
+    for i = 2:(n-1)
+        for j = 1:n
             if i != j
                 D[i, j] = w[j] / ((x[i] - x[j]) * w[i])
             end
@@ -22,12 +22,12 @@ function EO_matrix_derivative(x)
         D[i, i] = -sum(D[i, :])
     end
 
-    for j in 2:n
+    for j = 2:n
         D[1, j] = w[j] / ((x[1] - x[j]) * w[1])
     end
     D[1, 1] = -sum(D[1, :])
 
-    for j in 1:(n - 1)
+    for j = 1:(n-1)
         D[n, j] = w[j] / ((x[n] - x[j]) * w[n])
     end
     D[n, n] = -sum(D[n, :])
@@ -39,13 +39,13 @@ function kth_derivative_matrix(x, k_max)
     n = length(x)
     D_prev = EO_matrix_derivative(x)
     Dks = [D_prev]
-    for k in 2:k_max
+    for k = 2:k_max
         D_k = zeros(n, n)
-        for i in 1:n
-            for j in 1:n
+        for i = 1:n
+            for j = 1:n
                 if i != j
                     diff_x = x[i] - x[j]
-                    D_k[i, j] = (k / diff_x) * (Dks[k - 1][j, j] - Dks[k - 1][i, j])
+                    D_k[i, j] = (k / diff_x) * (Dks[k-1][j, j] - Dks[k-1][i, j])
                 end
             end
             D_k[i, i] = -sum(D_k[i, :])
@@ -71,8 +71,8 @@ end
 
 function shifted_adapted_gauss_legendre(
     N::Int,
-    a::Float64=0.0,
-    b::Float64=1.0,
+    a::Float64 = 0.0,
+    b::Float64 = 1.0,
 )::Tuple{Vector{Float64},Vector{Float64}}
     x, w = gausslegendre(N - 2)
     x = vcat(-1, x, 1)
@@ -89,9 +89,9 @@ function barycentric_interpolation(x_points, y_points)
     return function (x)
         result = 0.0
 
-        for i in 1:n
+        for i = 1:n
             basis = 1.0
-            for j in 1:n
+            for j = 1:n
                 if i != j
                     basis = basis .* (x .- x_points[j]) ./ (x_points[i] .- x_points[j])
                 end

@@ -4,8 +4,8 @@ function Parallel_assemble_system(problem::Problem)::System
     A = spzeros(Float64, problem.num_elements * num_basis, problem.num_elements * num_basis)
     b = zeros(Float64, problem.num_elements * num_basis)
 
-    Threads.@threads for i in 1:problem.num_elements
-        for j in 1:num_basis
+    Threads.@threads for i = 1:problem.num_elements
+        for j = 1:num_basis
             A[i, j] = integrate_basis(
                 length(problem.domain),
                 problem.domain,
@@ -35,7 +35,7 @@ function Parallel_compute_error_estimates(
 )::Vector{Float64}
     error_estimates = zeros(Float64, length(solution))
 
-    Threads.@threads for i in 1:length(solution)
+    Threads.@threads for i = 1:length(solution)
         error_estimates[i] =
             norm(solution[i] - basis_functions[i](collocation_points[i])) * weights[i]
     end

@@ -62,7 +62,10 @@ Create a new `GoalOrientedErrorEstimator` instance.
 # Errors
 - Throws an `ArgumentError` if `goal_functional` is `nothing` or `error_indicators` are empty.
 """
-function GoalOrientedErrorEstimator(goal_functional::Function, error_indicators::Vector{T}) where {T<:AbstractFloat}
+function GoalOrientedErrorEstimator(
+    goal_functional::Function,
+    error_indicators::Vector{T},
+) where {T<:AbstractFloat}
     check_non_empty_elements(error_indicators, "Error indicators")
     check_is_nothing(goal_functional, "Goal functional")
 

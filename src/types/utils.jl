@@ -89,7 +89,8 @@ Check if an argument is within a specific range.
 - `name::String`: The name of the argument.
 """
 function check_range(arg, min, max, name::String)
-    (arg >= min && arg <= max) || throw(ArgumentError("$(name) must be in the range [$(min), $(max)]"))
+    (arg >= min && arg <= max) ||
+        throw(ArgumentError("$(name) must be in the range [$(min), $(max)]"))
 end
 
 @doc """
@@ -134,12 +135,14 @@ Check if the fields of a struct are valid.
 - `ignore_fields`: Fields to ignore in the check.
 """
 
-function check_fields(arg, name::String, ignore_fields=[])
+function check_fields(arg, name::String, ignore_fields = [])
     for field in fieldnames(typeof(arg))
         if !(string(field) in ignore_fields)
             field_value = getfield(arg, field)
-            isnothing(field_value) && throw(ArgumentError("Field '$field' of $name must not be nothing"))
-            if (isa(field_value, AbstractArray) || isa(field_value, String)) && isempty(field_value)
+            isnothing(field_value) &&
+                throw(ArgumentError("Field '$field' of $name must not be nothing"))
+            if (isa(field_value, AbstractArray) || isa(field_value, String)) &&
+               isempty(field_value)
                 throw(ArgumentError("Field '$field' of $name must not be empty"))
             end
         end

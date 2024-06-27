@@ -6,4 +6,4 @@ include("makePlots.jl")
 export plot_solution, plot_error_distribution
 
 
-end 
+end
