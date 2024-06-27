@@ -1,41 +1,70 @@
 name: CI
+
 on:
   push:
     branches:
-      - master
-    tags: ['*']
+      - main
   pull_request:
-  workflow_dispatch:
-concurrency:
-  # Skip intermediate builds: always.
-  # Cancel intermediate builds: only if it is a pull request build.
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    permissions: # needed to allow julia-actions/cache to proactively delete old caches that it has created
-      actions: write
-      contents: read
     strategy:
-      fail-fast: false
       matrix:
-        version:
-          - '1.10'
-          - '1.6'
-          - 'nightly'
-        os:
-          - ubuntu-latest
-        arch:
-          - x64
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        julia-version: ['1.6', '1.7', '1.8', 'nightly']
+        allow_failures:
+          - julia-version: 'nightly'
+      fail-fast: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v1
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v1
         with:
-          version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
-      - uses: julia-actions/cache@v1
-      - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
+          version: ${{ matrix.julia-version }}
+
+      - name: Cache Julia artifacts
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.julia/artifacts
+            ~/.julia/packages
+            ~/.julia/registries
+          key: ${{ runner.os }}-julia-${{ matrix.julia-version }}-${{ hashFiles('**/Manifest.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-julia-${{ matrix.julia-version }}-
+
+      - name: Cache Julia compiled packages
+        uses: actions/cache@v2
+        with:
+          path: ~/.julia/compiled
+          key: ${{ runner.os }}-julia-${{ matrix.julia-version }}-compiled-${{ hashFiles('**/Manifest.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-julia-${{ matrix.julia-version }}-compiled-
+
+      - name: Format Julia code
+        run: julia --project=@. -e 'using JuliaFormatter; format(".")'
+
+      - name: Run tests
+        run: julia --project=@. -e 'using Pkg; Pkg.test(coverage=true)'
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v2
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: true
+
+  draft_release_notes:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Draft Release Notes
+        uses: release-drafter/release-drafter@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
