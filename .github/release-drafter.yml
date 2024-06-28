@@ -18,6 +18,7 @@ jobs:
         with:
           config-name: .github/release-drafter.yml
 
+draft: true
 categories:
   - title: "New Features"
     labels: ["feature", "enhancement"]
