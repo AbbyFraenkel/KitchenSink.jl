@@ -13,7 +13,7 @@ jobs:
       - name: Set up Julia
         uses: julia-actions/setup-julia@v1
         with:
-          version: '1.6' # Minimum supported version
+          version: '1.8' # Minimum supported version
 
       - name: Install TagBot
         run: julia --project -e 'using Pkg; Pkg.add("TagBot"); using TagBot'
