@@ -20,8 +20,9 @@
 Thumbs.db
 
 # Ignore Julia project-specific files
-manifest.toml
-project.toml
+Manifest.toml
+Project.toml
+format.jl
 
 # Ignore backup files
 *.bak
