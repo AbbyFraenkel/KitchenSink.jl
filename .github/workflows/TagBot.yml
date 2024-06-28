@@ -1,19 +1,24 @@
 name: TagBot
 
 on:
-  schedule:
-    - cron: "0 0 * * *"  # daily
-  workflow_dispatch:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'
 
 jobs:
   TagBot:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
-      - name: Run TagBot
-        uses: JuliaRegistries/TagBot@v1
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          version: '1.6' # Minimum supported version
+
+      - name: Install TagBot
+        run: julia --project -e 'using Pkg; Pkg.add("TagBot"); using TagBot'
+
+      - name: Run TagBot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: julia --project -e 'using TagBot; TagBot.main()'
