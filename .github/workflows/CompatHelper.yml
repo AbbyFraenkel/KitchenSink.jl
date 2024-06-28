@@ -1,35 +1,21 @@
 name: CompatHelper
+
 on:
   schedule:
-    - cron: '0 0 * * *'  # Runs daily at midnight
-  workflow_dispatch:  # Allows manual triggering of the workflow
+    - cron: '0 0 * * *' # Runs daily
 
 jobs:
   CompatHelper:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2  # Checks out your repository under $GITHUB_WORKSPACE
 
-      - name: Setup Julia
+    steps:
+      - name: Set up Julia
         uses: julia-actions/setup-julia@v1
         with:
-          version: '1.x'  # Use the latest Julia 1.x version
+          version: '1.6' # Minimum supported version
 
       - name: Install CompatHelper
-        run: julia -e 'using Pkg; Pkg.add("CompatHelper")'
+        run: julia --project -e 'using Pkg; Pkg.add("CompatHelper"); using CompatHelper'
 
       - name: Run CompatHelper
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # GitHub token for authentication
-          COMPATHELPER_PRIV: ${{ secrets.DOCUMENTER_KEY }}  # Private key for SSH access, if needed
-        run: julia -e 'using CompatHelper; CompatHelper.main()'
-
-      - name: Setup SSH Key
-        if: env.COMPATHELPER_PRIV != ''
-        run: |
-          mkdir -p ~/.ssh
-          echo "$COMPATHELPER_PRIV" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
-        env:
-          COMPATHELPER_PRIV: ${{ secrets.DOCUMENTER_KEY }}
+        run: julia --project -e 'using CompatHelper; CompatHelper.main()'
