@@ -151,6 +151,69 @@ function refine_by_superposition(
 end
 
 
+"""
+    refine_by_superposition!(root::TreeNode, refinement_factor::Int)
+
+Refine the mesh by superposition, creating a finer grid overlay on each element.
+
+# Arguments
+- `root::TreeNode`: The root of the tree representing the mesh.
+- `refinement_factor::Int`: The factor by which to refine the mesh.
+
+# Returns
+- Nothing. The mesh is modified in-place.
+"""
+function refine_by_superposition!(root::TreeNode, refinement_factor::Int)
+    elements = collect_elements(root)
+    for element in elements
+        fine_element = initialize_fine_grid_overlay(element, refinement_factor)
+        project_coarse_to_fine(element, fine_element)
+
+        new_node = TreeNode(fine_element, TreeNode{Float64}[], element.bounds)
+        push!(root.children, new_node)
+    end
+end
+
+"""
+    adaptive_refinement_superposition!(
+        root::TreeNode, problem::GeneralProblem, h_threshold::Float64,
+        p_threshold::Float64, max_refinements::Int, dt::Float64, refinement_factor::Int)
+
+Perform adaptive mesh refinement using superposition, h-refinement, and p-refinement.
+
+# Arguments
+- `root::TreeNode`: The root of the tree representing the mesh.
+- `problem::GeneralProblem`: The problem to be solved.
+- `h_threshold::Float64`: The error threshold for h-refinement.
+- `p_threshold::Float64`: The error threshold for p-refinement.
+- `max_refinements::Int`: The maximum number of refinement iterations.
+- `dt::Float64`: The time step size.
+- `refinement_factor::Int`: The factor by which to refine the mesh.
+
+# Returns
+- Nothing. The mesh and solution are modified in-place.
+"""
+function adaptive_refinement_superposition!(
+    root::TreeNode, problem::GeneralProblem, h_threshold::Float64,
+    p_threshold::Float64, max_refinements::Int, dt::Float64, refinement_factor::Int)
+    for _ in 1:max_refinements
+        elements = collect_elements(root)
+        for element in elements
+            error = estimate_error(element, problem, dt)
+            smoothness_indicator = compute_smoothness_indicator(element, problem)
+
+            refinement_type = decide_refinement(
+                element, error, smoothness_indicator, h_threshold, p_threshold)
+            if refinement_type == :h_refine
+                refine_by_superposition!(root, refinement_factor)
+            elseif refinement_type == :p_refine
+                p_refine!(element)
+            end
+        end
+        update_mesh_and_basis_functions(root)
+        solve_problem(problem, dt)
+    end
+end
 
 
 @doc """

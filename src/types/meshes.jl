@@ -82,6 +82,7 @@ A structure representing an element in a mesh.
 """
 mutable struct Element{T<:AbstractFloat} <: AbstractElement
     nodes::Vector{Node{T}}
+    weights::Vector{Vector{T}}
     collocation_points::Vector{CollocationPoint{T}}
     basis_functions::Vector{BasisFunction}
     active_basis_indices::Vector{Int}
@@ -93,6 +94,20 @@ mutable struct Element{T<:AbstractFloat} <: AbstractElement
     error_estimate::T
     boundary_information::Dict
 end
+
+# ToDo: compare element structures on implementation
+
+# mutable struct Element{T,N}
+#     nodes::Vector{Vector{T}}
+#     weights::Vector{Vector{T}}
+#     p_order::Int
+#     tensor_data::Array{Float64,N}
+#     active_basis::BitVector
+#     solution::Array{Float64,N}
+#     residuals::Array{Float64,N}
+#     refined::Bool
+#     connectivity::Vector{Tuple{Int,Int}}
+# end
 
 @doc """
     Element(nodes::Vector{Node{T}}, collocation_points::Vector{CollocationPoint{T}}, basis_functions::Vector{BasisFunction}, active_basis_indices::Vector{Int}, removable_basis_indices::Vector{Int}, parent::Union{Nothing, Element{T}}, level::Int, tensor_product_masks::TensorProductMask{T}, location_matrix::LocationMatrix{T}, error_estimate::T, boundary_information::Dict) where {T<:AbstractFloat}

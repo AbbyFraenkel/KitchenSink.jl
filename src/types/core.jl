@@ -149,6 +149,14 @@ struct Node <: AbstractNode
     coordinates::Vector{Float64}
     # other node-specific fields
 end
+# ToDo: compare tree node with node
+
+mutable struct TreeNode{T} <: AbstractTreeNode
+    element::Element{T}
+    children::Vector{TreeNode{T}}
+    TreeNode{T}() where {T} = new{T}(TreeNode{T}[])
+    bounds::Tuple{Vector{Float64},Vector{Float64}}
+end
 
 @doc """
     CollocationPoint

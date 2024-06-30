@@ -90,3 +90,129 @@ function MeshAssembly(
 
     return A, b
 end
+
+
+function split_or_merge_elements(element_errors, mesh, max_error)
+    # Split or merge elements based on the error
+    new_mesh = []
+    i = 1
+    while i <= length(mesh)
+        if element_errors[i] > max_error
+            # Split the element
+            new_mesh = vcat(new_mesh, split_element(mesh[i]))
+        elseif i < length(mesh) && element_errors[i] < max_error / 2 &&
+               element_errors[i + 1] < max_error / 2
+            # Merge with the next element
+            new_mesh = vcat(new_mesh, merge_elements(mesh[i], mesh[i + 1]))
+            i += 1  # Skip the next element
+        else
+            # Keep the element as is
+            new_mesh = vcat(new_mesh, mesh[i])
+        end
+        i += 1
+    end
+    return new_mesh
+end
+
+
+
+function adjust_polynomial_order(x_nodes, f, max_error, min_order, max_order)
+  # x_nodes: Nodes for polynomial interpolation
+  # f: Function to interpolate
+  # max_error: Maximum allowable interpolation error
+  # min_order: Minimum allowable polynomial order
+  # max_order: Maximum allowable polynomial order
+
+  # Compute the Lagrange polynomials
+  L = Lagrange_polynomials(x_nodes)
+
+  # Compute the interpolation error
+  error = norm(L * f.(x_nodes) - f.(x_nodes), Inf)
+
+  # Increase or decrease the polynomial order based on the error
+  if error > max_error && length(x_nodes) < max_order
+    # Increase the polynomial order by adding a node
+    x_nodes = vcat(x_nodes, mean(x_nodes))
+  elseif error < max_error / 2 && length(x_nodes) > min_order
+    # Decrease the polynomial order by removing a node
+    x_nodes = x_nodes[1:end-1]
+  end
+
+  return x_nodes
+end
+
+function update_mesh_and_basis_functions(root::TreeNode)
+  # Adjust mesh and basis functions based on refined elements
+  # This may involve updating the element connectivity, nodal coordinates, and basis function evaluations
+
+  # Iterate over all elements
+  for element in collect_elements(root)
+    # Check if the element has been refined
+    if element.refined
+      # Update the element's connectivity, coordinates, and basis function evaluations
+      # The specifics of this will depend on your implementation
+      element.connectivity = update_connectivity(element)
+      element.coordinates = update_coordinates(element)
+      element.basis_functions = update_basis_functions(element)
+    end
+  end
+end
+
+function update_mesh_and_basis_functions(root::TreeNode)
+    for element in collect_elements(root)
+        if element.refined
+            element.connectivity = update_connectivity(element)
+            element.coordinates = update_coordinates(element)
+            element.basis_functions = update_basis_functions(element)
+        end
+    end
+end
+
+function update_connectivity(element::Element)
+    new_connectivity = []
+
+    function add_connectivity(dims, indices)
+        if dims == 1
+            push!(new_connectivity, (indices[1], indices[1] + 1))
+        else
+            push!(new_connectivity, (indices..., indices[1:(end - 1)]..., indices[end] + 1))
+        end
+    end
+
+    function iterate_dims(dims, sizes, indices)
+        if dims == 0
+            add_connectivity(length(indices), indices)
+        else
+            for i in 1:(sizes[dims] - 1)
+                iterate_dims(dims - 1, sizes, [i, indices...])
+            end
+        end
+    end
+
+    dims = length(element.nodes)
+    sizes = map(length, element.nodes)
+
+    iterate_dims(dims, sizes, [])
+
+    return new_connectivity
+end
+
+function update_coordinates(element::Element)
+    new_coordinates = []
+
+    for i in 1:length(element.nodes)
+        coords = element.nodes[i]
+        n = length(coords)
+        new_coords = []
+
+        for j in 1:(n - 1)
+            mid = (coords[j] + coords[j + 1]) / 2
+            push!(new_coords, coords[j])
+            push!(new_coords, mid)
+        end
+        push!(new_coords, coords[end])
+        push!(new_coordinates, new_coords)
+    end
+
+    return new_coordinates
+end

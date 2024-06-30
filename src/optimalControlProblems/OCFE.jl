@@ -89,3 +89,41 @@ end
 )::Vector{Float64}
     return adjoint_solution .* control
 end
+
+"""
+    create_provisional_ocfe_mesh(n_nodes, n_elements, a = 0, b = 1)
+
+Creates a provisional mesh for the Orthogonal Collocation Finite Element (OCFE) method.
+
+# Arguments
+- `n_nodes::Int`: The number of nodes per element.
+- `n_elements::Int`: The number of elements in the mesh.
+- `a::Float64 = 0`: The lower bound of the interval.
+- `b::Float64 = 1`: The upper bound of the interval.
+
+# Returns
+- `mesh::Matrix{Float64}`: A matrix representing the mesh with dimensions `n_elements x n_nodes`.
+
+# Notes
+- The mesh is created using a uniform distribution of collocation points and the Gauss-Legendre quadrature nodes.
+- The elements are defined by the interval `[a, b]` and the number of elements `n_elements`.
+"""
+function create_provisional_ocfe_mesh(n_nodes, n_elements, a = 0, b = 1)
+    xn, wn = ShiftedAdaptedGaussLegendre(n_nodes)
+
+    # Initialize mesh with uniform distribution of collocation points
+    # elements = LinRange(a, b, n_elements)
+    elements = collect(range(a, b, length = n_elements + 1))
+    h = elements[2] - elements[1]
+    xn_e = h.* xn
+
+    # Create elements based on the mesh nodes
+    mesh = zeros(n_elements, n_nodes)
+    for i in 1:n_elements
+        for j in 1:n_nodes
+            mesh[i, j] = h.* (i.- 1).+ (xn_e[j])
+        end
+    end
+
+    return mesh
+end

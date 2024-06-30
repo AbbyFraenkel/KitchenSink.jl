@@ -17,4 +17,8 @@ export jacobi_preconditioner, ilu_preconditioner
 # #xport Regularization
 include("regularization.jl")
 export CoordinateDescentRidge, CoordinateDescentLasso, CoordinateDescentElasticNet
+
+include("masks.jl")
+export createMask, applyMask
+
 end

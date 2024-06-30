@@ -3,21 +3,26 @@ module TimeStepping
 export solve_pde, rk4_step, euler_step, rk45_step, solve_sde, solve_bvdae_advanced
 
 using LinearAlgebra
+
 using .Types
-
 """
-    euler_step(f::Function, u::Vector{Float64}, t::Float64, dt::Float64)::Vector{Float64}
+    implicit_euler_step!(solution, problem, element, dt)
 
-Perform a single Euler step.
+Perform a single time step using the implicit Euler method.
 """
-@inline function euler_step(
-    f::Function,
-    u::Vector{Float64},
-    t::Float64,
-    dt::Float64,
-)::Vector{Float64}
-    return u .+ dt .* f(u, t)
+function implicit_euler_step!(
+    solution, problem::AbstractProblem, element::Element, dt::Float64)
+    residual = similar(solution)
+    jacobian = compute_jacobian(element)
+
+    for _ in 1:10  # Simple fixed-point iteration, replace with Newton-Raphson if needed
+        problem.equation(residual, solution, element)
+        solution -= dt * (jacobian \ residual)
+    end
+
+    return solution
 end
+
 
 """
     rk4_step(f::Function, u::Vector{Float64}, t::Float64, dt::Float64)::Vector{Float64}
@@ -37,42 +42,7 @@ Perform a single Runge-Kutta 4th order (RK4) step.
     return u .+ (k1 .+ 2k2 .+ 2k3 .+ k4) ./ 6
 end
 
-"""
-    rk45_step(f::Function, u::Vector{Float64}, t::Float64, dt::Float64)::Tuple{Vector{Float64}, Vector{Float64}}
-
-Perform a single Runge-Kutta-Fehlberg 45 (RK45) step.
-"""
-@inline function rk45_step(
-    f::Function,
-    u::Vector{Float64},
-    t::Float64,
-    dt::Float64,
-)::Tuple{Vector{Float64},Vector{Float64}}
-    k1 = dt .* f(u, t)
-    k2 = dt .* f(u .+ 0.25 .* k1, t + 0.25 * dt)
-    k3 = dt .* f(u .+ 3 / 32 .* k1 .+ 9 / 32 .* k2, t + 3 / 8 * dt)
-    k4 =
-        dt .* f(
-            u .+ 1932 / 2197 .* k1 .- 7200 / 2197 .* k2 .+ 7296 / 2197 .* k3,
-            t + 12 / 13 * dt,
-        )
-    k5 =
-        dt .*
-        f(u .+ 439 / 216 .* k1 .- 8 .* k2 .+ 3680 / 513 .* k3 .- 845 / 4104 .* k4, t + dt)
-    k6 =
-        dt .* f(
-            u .- 8 / 27 .* k1 .+ 2 .* k2 .- 3544 / 2565 .* k3 .+ 1859 / 4104 .* k4 .-
-            11 / 40 .* k5,
-            t + 0.5 * dt,
-        )
-
-    u4 = u .+ 25 / 216 .* k1 .+ 1408 / 2565 .* k3 .+ 2197 / 4104 .* k4 .- 1 / 5 .* k5
-    u5 =
-        u .+ 16 / 135 .* k1 .+ 6656 / 12825 .* k3 .+ 28561 / 56430 .* k4 .- 9 / 50 .* k5 .+
-        2 / 55 .* k6
-
-    return u4, u5
-end
+energy_norm_error_estimator
 
 """
     solve_pde(D::Matrix{Float64}, x::Vector{Float64}, f::Function, u0::Vector{Float64}, tspan::Vector{Float64}, method::Symbol)::Vector{Float64}
@@ -171,6 +141,41 @@ function solve_bvdae_advanced(problem::BVDAEProblem)::Vector{Float64}
     sol = solve(prob, IDA())
 
     return sol
+end
+
+function time_stepping_with_removal(mesh, basis_functions, initial_conditions, time_steps, threshold)
+    solution = initial_conditions
+    for t in 1:time_steps
+        # Solve the PDE for the current time step
+        solution = solve_pde(mesh, basis_functions)
+
+        # Estimate errors
+        error_indicators = estimate_errors(solution, mesh, basis_functions)
+
+        # Identify removable basis functions
+        removable_basis_indices = identify_removable_basis(error_indicators, threshold)
+
+        if !isempty(removable_basis_indices)
+            # Update finite element space
+            mesh, basis_functions = update_finite_element_space(mesh, basis_functions, removable_basis_indices)
+        end
+
+        # Output or store the solution for the current time step
+        # println("Time step $t completed.")
+    end
+    return solution
+end
+
+
+function update_finite_element_space(mesh, basis_functions, removable_basis_indices)
+    updated_basis_functions = basis_functions[setdiff(1:end, removable_basis_indices)]
+    updated_mesh = update_mesh(mesh, updated_basis_functions)
+    return updated_mesh, updated_basis_functions
+end
+
+function identify_removable_basis(error_indicators, threshold)
+    removable_basis_indices = findall(x -> x < threshold, error_indicators)
+    return removable_basis_indices
 end
 
 end # module
