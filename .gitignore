@@ -64,6 +64,7 @@ sys*.so
 # Ignore package tarballs and zip files
 *.tar.gz
 *.zip
+*.ini
 
 # Ignore BinaryProvider artifacts
 .julia/artifacts/*
