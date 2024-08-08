@@ -1,17 +1,26 @@
 module KitchenSink
 
-include("types/Types.jl")
-include("adaptiveMultiGrid/AdaptiveMultigrid.jl")
-include("visualization/Visualization.jl")
-include("systemFormulation/SystemFormulation.jl")
-include("refinement/Refinement.jl")
-include("meshManagement/MeshManagement.jl")
-include("parallelMethods/ParallelMethods.jl")
-include("optimalControlProblems/OptimalControlProblems.jl")
-include("meshManagement/MeshManagement.jl")
-include("discretization/Discretization.jl")
-include("timeStepping/TimeStepping.jl")
-include("boundaryConditions/BoundaryConditions.jl")
-include("elementOperations/ElementOperations.jl")
+using LinearAlgebra, SparseArrays, FastGaussQuadrature, Plots, ForwardDiff
+using AlgebraicMultigrid, IterativeSolvers
+
+include("KSTypes/KSTypes.jl")
+include("SpectralMethods/SpectralMethods.jl")
+include("AdaptiveMethods/AdaptiveMethods.jl")
+include("CoordinateSystems/CoordinateSystems.jl")
+include("CommonMethods/CommonMethods.jl")
+include("MultiLevelMethods/MultiLevelMethods.jl")
+include("Preprocessing/Preprocessing.jl")
+include("LinearSolvers/LinearSolvers.jl")
+include("ProblemTypes/ProblemTypes.jl")
+
+
+include("IntegridOperators/IntegridOperators.jl")
+include("Preconditioners/Preconditioners.jl")
+
+include("Optimization/Optimization.jl")
+include("TimeStepping/TimeStepping.jl")
+include("Visualization/Visualization.jl")
+
+
 
 end

@@ -2,23 +2,25 @@ name: TagBot
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: 
+      - 'v*.*.*'  # Matches version tags
 
 jobs:
-  TagBot:
+  tag:
     runs-on: ubuntu-latest
-
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
       - name: Set up Julia
         uses: julia-actions/setup-julia@v1
         with:
-          version: '1.8' # Minimum supported version
+          version: '1.10'  
 
       - name: Install TagBot
-        run: julia --project -e 'using Pkg; Pkg.add("TagBot"); using TagBot'
+        run: julia --project=@. -e 'using Pkg; Pkg.add("TagBot")'
 
       - name: Run TagBot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: julia --project -e 'using TagBot; TagBot.main()'
+        run: julia --project=@. -e 'using TagBot; TagBot.main()'
