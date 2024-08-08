@@ -2,20 +2,23 @@ name: CompatHelper
 
 on:
   schedule:
-    - cron: '0 0 * * *' # Runs daily
+    - cron: "0 0 * * *"  # Runs daily at midnight
+  workflow_dispatch:  # Allows manual triggering of the workflow
 
 jobs:
-  CompatHelper:
+  compathelper:
     runs-on: ubuntu-latest
-
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
       - name: Set up Julia
         uses: julia-actions/setup-julia@v1
         with:
-          version: '1.8' # Minimum supported version
+          version: '1.10'  
 
       - name: Install CompatHelper
-        run: julia --project -e 'using Pkg; Pkg.add("CompatHelper"); using CompatHelper'
+        run: julia --project=@. -e 'using Pkg; Pkg.add("CompatHelper")'
 
       - name: Run CompatHelper
-        run: julia --project -e 'using CompatHelper; CompatHelper.main()'
+        run: julia --project=@. -e 'using CompatHelper; CompatHelper.main()'
