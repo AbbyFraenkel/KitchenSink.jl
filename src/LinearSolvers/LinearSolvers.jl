@@ -1,21 +1,13 @@
 module LinearSolvers
 
-using LinearAlgebra, SparseArrays, IterativeSolvers, AlgebraicMultigrid, BenchmarkTools, DataFrames
-using ..KSTypes, ..Preprocessing
+using LinearAlgebra, SparseArrays, IterativeSolvers, AlgebraicMultigrid
+using ..KSTypes, ..CommonMethods, ..Preconditioners
 
-export solve_linear_system, select_optimal_solver, solve_with_logging, benchmark_solvers
+export solve_linear_system, select_optimal_solver
 
-export solve_direct, solve_direct_multiple_rhs
-include("direct_solvers.jl")
-
-export solve_iterative, solve_iterative_multiple_rhs, iterative_refinement
-include("iterative_solvers.jl")
-
-export solve_amg, solve_amg_multiple_rhs
-include("amg_solvers.jl")
 
 """
-    solve_linear_system(A::AbstractMatrix{T}, b::AbstractVector{T}, solver::AbstractKSLinearSolver)::AbstractVector{T} where T
+    solve_linear_system(A::AbstractMatrix{T}, b::AbstractVector{T}, solver::AbstractKSLinearSolver) where T <: Real
 
 Solve a linear system Ax = b using the specified solver configuration.
 
@@ -27,18 +19,14 @@ Solve a linear system Ax = b using the specified solver configuration.
 # Returns
 - `AbstractVector{T}`: The solution vector.
 
-# Example
-```julia
-using KitchenSink.LinearSolvers
-using KitchenSink.KSTypes
-
-A = [4.0 1.0; 1.0 3.0]
-b = [1.0, 2.0]
-solver = KSDirectSolver(:lu)
-x = solve_linear_system(A, b, solver)
-```
+# Throws
+- `DimensionMismatch`: If the dimensions of A and b are incompatible.
+- `ArgumentError`: If an unsupported solver type is provided.
 """
-function solve_linear_system(A::AbstractMatrix{T}, b::AbstractVector{T}, solver::AbstractKSLinearSolver)::AbstractVector{T} where {T}
+function solve_linear_system(A::AbstractMatrix{T}, b::AbstractVector{T}, solver::AbstractKSLinearSolver) where T <: Real
+    size(A, 1) == size(A, 2) || throw(DimensionMismatch("Matrix A must be square"))
+    size(A, 1) == length(b) || throw(DimensionMismatch("Dimensions of A and b must match"))
+
     if solver isa KSDirectSolver
         return solve_direct(A, b, solver.method)
     elseif solver isa KSIterativeSolver
@@ -46,12 +34,124 @@ function solve_linear_system(A::AbstractMatrix{T}, b::AbstractVector{T}, solver:
     elseif solver isa KSAMGSolver
         return solve_amg(A, b, solver)
     else
-        error("Unknown solver type")
+        throw(ArgumentError("Unsupported solver type: $(typeof(solver))"))
     end
 end
 
 """
-    select_optimal_solver(A::AbstractMatrix{T}, problem_type::Symbol)::Union{KSDirectSolver,KSIterativeSolver,KSAMGSolver} where {T<:Real}
+    solve_direct(A::AbstractMatrix{T}, b::AbstractVector{T}, method::Symbol) where T <: Real
+
+Solve a linear system using a direct method.
+
+# Arguments
+- `A::AbstractMatrix{T}`: The system matrix.
+- `b::AbstractVector{T}`: The right-hand side vector.
+- `method::Symbol`: The direct method to use (:lu or :qr).
+
+# Returns
+- `AbstractVector{T}`: The solution vector.
+
+# Throws
+- `ArgumentError`: If an unsupported direct method is provided.
+"""
+function solve_direct(A::AbstractMatrix{T}, b::AbstractVector{T}, method::Symbol) where T <: Real
+    if method == :lu
+        return A \ b
+    elseif method == :qr
+        return qr(A) \ b
+    else
+        throw(ArgumentError("Unsupported direct method: $method"))
+    end
+end
+
+"""
+    solve_iterative(A::AbstractMatrix{T}, b::AbstractVector{T}, solver::KSIterativeSolver) where T <: Real
+
+Solve a linear system using an iterative method.
+
+# Arguments
+- `A::AbstractMatrix{T}`: The system matrix.
+- `b::AbstractVector{T}`: The right-hand side vector.
+- `solver::KSIterativeSolver`: The iterative solver configuration.
+
+# Returns
+- `AbstractVector{T}`: The solution vector.
+
+# Throws
+- `ArgumentError`: If an unsupported iterative method is provided.
+"""
+function solve_iterative(A::AbstractMatrix{T}, b::AbstractVector{T}, solver::KSIterativeSolver) where T <: Real
+    if solver.method == :cg
+        return cg(A, b; maxiter=solver.max_iter, tol=solver.tolerance, Pl=solver.preconditioner)
+    elseif solver.method == :gmres
+        return gmres(A, b; maxiter=solver.max_iter, tol=solver.tolerance, Pl=solver.preconditioner)
+    else
+        throw(ArgumentError("Unsupported iterative method: $(solver.method)"))
+    end
+end
+
+"""
+    solve_amg(A::AbstractMatrix{T}, b::AbstractVector{T}, solver::KSAMGSolver; verbose::Bool=false) where T <: Real
+
+Solve a linear system using the Algebraic Multigrid (AMG) method.
+
+# Arguments
+- `A::AbstractMatrix{T}`: The system matrix.
+- `b::AbstractVector{T}`: The right-hand side vector.
+- `solver::KSAMGSolver`: The AMG solver configuration.
+- `verbose::Bool`: Whether to print verbose output (default: false).
+
+# Returns
+- `AbstractVector{T}`: The solution vector.
+
+# Throws
+- `ArgumentError`: If an unsupported smoother is provided.
+"""
+function solve_amg(A::AbstractMatrix{T}, b::AbstractVector{T}, solver::KSAMGSolver; verbose::Bool=false) where T <: Real
+    smoother = select_smoother(solver.smoother)
+    A_sparse = sparse(A)
+    ml = AlgebraicMultigrid.ruge_stuben(A_sparse)
+    x, conv = AlgebraicMultigrid.solve(ml, b; maxiter=solver.max_iter, abstol=solver.tolerance, smoother=smoother)
+
+    if verbose
+        if conv
+            @info "AMG solver converged."
+        else
+            @warn "AMG solver did not converge within the specified tolerance."
+        end
+    end
+
+    return x
+end
+
+"""
+    select_smoother(smoother::Symbol)
+
+Select the appropriate smoother function for AlgebraicMultigrid.
+
+# Arguments
+- `smoother::Symbol`: The smoother type (:jacobi, :gauss_seidel, or :sor).
+
+# Returns
+- `Function`: The smoother function.
+
+# Throws
+- `ArgumentError`: If an unsupported smoother is provided.
+"""
+function select_smoother(smoother::Symbol)
+    if smoother == :jacobi
+        return AlgebraicMultigrid.Jacobi()
+    elseif smoother == :gauss_seidel
+        return AlgebraicMultigrid.GaussSeidel()
+    elseif smoother == :sor
+        return AlgebraicMultigrid.SOR(1.0)
+    else
+        throw(ArgumentError("Unsupported smoother: $smoother"))
+    end
+end
+
+"""
+    select_optimal_solver(A::AbstractMatrix{T}, problem_type::Symbol)::AbstractKSLinearSolver where T <: Real
 
 Select the optimal solver based on the properties of the input matrix A and the problem type.
 
@@ -60,19 +160,12 @@ Select the optimal solver based on the properties of the input matrix A and the 
 - `problem_type::Symbol`: The type of the problem (e.g., :general, :spd, :elliptic).
 
 # Returns
-- `Union{KSDirectSolver,KSIterativeSolver,KSAMGSolver}`: The selected optimal solver.
+- `AbstractKSLinearSolver`: The selected optimal solver.
 
-# Example
-```julia
-using KitchenSink.LinearSolvers
-using KitchenSink.KSTypes
-
-A = sprand(1000, 1000, 0.01)
-problem_type = :general
-solver = select_optimal_solver(A, problem_type)
-```
+# Throws
+- `ArgumentError`: If an unsupported problem type is provided.
 """
-function select_optimal_solver(A::AbstractMatrix{T}, problem_type::Symbol)::Union{KSDirectSolver,KSIterativeSolver,KSAMGSolver} where {T<:Real}
+function select_optimal_solver(A::AbstractMatrix{T}, problem_type::Symbol)::AbstractKSLinearSolver where T <: Real
     n = size(A, 1)
     nnz = count(!iszero, A)
     density = nnz / (n * n)
@@ -80,48 +173,14 @@ function select_optimal_solver(A::AbstractMatrix{T}, problem_type::Symbol)::Unio
     if n < 1000 && density > 0.1
         return KSDirectSolver(:lu)
     elseif issymmetric(A) && isposdef(A)
-        return KSIterativeSolver(:cg, 1000, 1e-8, amg_preconditioner(A))
+        return KSIterativeSolver(:cg, 1000, 1e-8, Preconditioners.amg_preconditioner(A))
     elseif problem_type == :elliptic
         return KSAMGSolver(1000, 1e-8, :gauss_seidel)
+    elseif problem_type == :general
+        return KSIterativeSolver(:gmres, 1000, 1e-8, Preconditioners.ilu_preconditioner(sparse(A)))
     else
-        return KSIterativeSolver(:gmres, 1000, 1e-8, ilu_preconditioner(sparse(A)))
+        throw(ArgumentError("Unsupported problem type: $problem_type"))
     end
 end
 
-"""
-    solve_with_logging(A::AbstractMatrix{T}, b::AbstractVector{T}, solver::Union{KSDirectSolver, KSIterativeSolver, KSAMGSolver})::Vector{T} where {T<:Real}
-
-Solve a linear system Ax = b using the specified solver and log the solve time and residual.
-
-# Arguments
-- `A::AbstractMatrix{T}`: The coefficient matrix of the linear system.
-- `b::AbstractVector{T}`: The right-hand side vector of the linear system.
-- `solver::Union{KSDirectSolver, KSIterativeSolver, KSAMGSolver}`: The solver to use for solving the linear system.
-
-# Returns
-- `Vector{T}`: The solution vector x of the linear system.
-
-# Example
-```julia
-using KitchenSink.LinearSolvers
-using KitchenSink.KSTypes
-
-A = [4.0 1.0; 1.0 3.0]
-b = [1.0, 2.0]
-solver = KSDirectSolver(:lu)
-x = solve_with_logging(A, b, solver)
-```
-"""
-function solve_with_logging(A::AbstractMatrix{T}, b::AbstractVector{T}, solver::Union{KSDirectSolver,KSIterativeSolver,KSAMGSolver})::Vector{T} where {T<:Real}
-    @info "Starting linear system solve" size(A) solver
-
-    time = @elapsed begin
-        x = solve_linear_system(A, b, solver)
-    end
-
-    residual = norm(b - A * x)
-    @info "Linear system solved" time residual
-
-    return x
-end
-end
+end # module LinearSolvers

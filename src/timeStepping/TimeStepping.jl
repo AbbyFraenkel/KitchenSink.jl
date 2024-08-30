@@ -1,9 +1,8 @@
 module TimeStepping
 
 using LinearAlgebra
-using ..KSTypes
+ using ..KSTypes, ..CommonMethods, ..LinearSolvers
 
-# Export functions
 export step_rk45, step_explicit_euler, step_implicit_euler, adapt_stepsize, solve_bvdae
 
 """
@@ -203,13 +202,3 @@ function solve_bvdae(f::Function, g::Function, bc::Function, tspan::Tuple{T,T}, 
 end
 
 end # module TimeStepping
-
-
-
-# ### TimeStepping.jl
-# - step_rk45
-# - step_explicit_euler
-# - step_implicit_euler
-# - adapt_stepsize
-# - solve_bvdae
-

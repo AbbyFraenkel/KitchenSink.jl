@@ -5,3 +5,5 @@ This section contains the API documentation for all public entities in the Kitch
 ```@autodocs
 Modules = [Types]
 ```
+
+Pages = ["api.md"]

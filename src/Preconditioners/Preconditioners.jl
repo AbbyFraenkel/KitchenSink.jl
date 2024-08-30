@@ -1,8 +1,7 @@
-# src/Preconditioners/Preconditioners.jl
 module Preconditioners
 
-using LinearAlgebra, SparseArrays, IncompleteLU, AlgebraicMultigrid
-using ..KSTypes
+using LinearAlgebra, SparseArrays, AlgebraicMultigrid, IncompleteLU
+using ..KSTypes, ..CommonMethods
 
 export jacobi_preconditioner, ilu_preconditioner, amg_preconditioner
 
@@ -15,18 +14,12 @@ Create a Jacobi preconditioner for the matrix A.
 - `A::AbstractMatrix{T}`: The system matrix.
 
 # Returns
-- `Diagonal{T,Vector{T}}`: The Jacobi preconditioner as a diagonal matrix.
+- The Jacobi preconditioner as a diagonal matrix.
 
 # Throws
-- `ArgumentError`: If the matrix is not square or symmetric.
-
-# Examples
-```julia
-A = Symmetric([4.0 1.0; 1.0 3.0])
-preconditioner = jacobi_preconditioner(A)
-```
+- `ArgumentError`: If the matrix A is not symmetric or not square.
 """
-function jacobi_preconditioner(A::AbstractMatrix{T}) where {T<:Real}
+function jacobi_preconditioner(A::AbstractMatrix{T}) where T<:Real
     if !issymmetric(A)
         throw(ArgumentError("Matrix A must be symmetric for Jacobi preconditioner"))
     end
@@ -34,7 +27,7 @@ function jacobi_preconditioner(A::AbstractMatrix{T}) where {T<:Real}
         throw(ArgumentError("Matrix A must be square"))
     end
 
-    Diagonal(one(T) ./ diag(A))
+    return Diagonal(one(T) ./ diag(A))
 end
 
 """
@@ -46,23 +39,17 @@ Create an Incomplete LU (ILU) preconditioner for the sparse matrix A.
 - `A::SparseMatrixCSC{T}`: The sparse system matrix.
 
 # Returns
-- `IncompleteLU.ILUFactorization{T}`: The ILU preconditioner.
+- The ILU preconditioner.
 
 # Throws
-- `ArgumentError`: If the matrix is not square.
-
-# Examples
-```julia
-A = sparse([4.0 1.0; 1.0 3.0])
-preconditioner = ilu_preconditioner(A)
-```
+- `ArgumentError`: If the matrix A is not square.
 """
-function ilu_preconditioner(A::SparseMatrixCSC{T}) where {T<:Real}
+function ilu_preconditioner(A::SparseMatrixCSC{T}) where T<:Real
     if size(A, 1) != size(A, 2)
         throw(ArgumentError("Matrix A must be square"))
     end
 
-    IncompleteLU.ilu(A, τ=0.1)
+    IncompleteLU.ilu(A, τ = 0.1)
 end
 
 """
@@ -74,25 +61,18 @@ Create an Algebraic Multigrid (AMG) preconditioner for the sparse matrix A.
 - `A::SparseMatrixCSC{T}`: The sparse system matrix.
 
 # Returns
-- `AlgebraicMultigrid.MultiLevel{T}`: The AMG preconditioner.
+- The AMG preconditioner.
 
 # Throws
-- `ArgumentError`: If the matrix is not square or not symmetric.
-
-# Examples
-```julia
-A = sparse(Symmetric([4.0 1.0; 1.0 3.0]))
-preconditioner = amg_preconditioner(A)
-```
+- `ArgumentError`: If the matrix A is not square or not symmetric.
 """
-function amg_preconditioner(A::SparseMatrixCSC{T}) where {T<:Real}
+function amg_preconditioner(A::SparseMatrixCSC{T}) where T<:Real
     if size(A, 1) != size(A, 2)
         throw(ArgumentError("Matrix A must be square"))
     end
     if !issymmetric(A)
         throw(ArgumentError("Matrix A must be symmetric for AMG preconditioner"))
     end
-
     AlgebraicMultigrid.ruge_stuben(A)
 end
 

@@ -66,7 +66,7 @@
 # KitchenSink supports different coordinate systems. Here's an example of creating a mesh in polar coordinates:
 
 # ```julia
-# # Define a domain in polar coordinates (r, θ)
+# # Define a domain in polar coordinates (r,theta)
 # polar_domain = ((0.0, 1.0), (0.0, 2π))
 
 # # Define the polar coordinate system
