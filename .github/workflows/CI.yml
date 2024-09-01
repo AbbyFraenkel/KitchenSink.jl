@@ -1,13 +1,19 @@
 name: CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v2
 
     - name: Set up Julia
@@ -15,8 +21,8 @@ jobs:
       with:
         version: '1.10'
 
-    - name: Install dependencies
+    - name: Install Dependencies
       run: julia -e 'using Pkg; Pkg.instantiate()'
 
-    - name: Run tests
-      run: julia -e 'using Pkg; Pkg.test()'
+    - name: Run Tests
+      run: julia -e 'using Pkg; Pkg.activate("."); Pkg.test()'
