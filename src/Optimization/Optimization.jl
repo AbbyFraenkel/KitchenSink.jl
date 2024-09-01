@@ -1,7 +1,9 @@
 module Optimization
 
 using LinearAlgebra, ForwardDiff, JuMP, Ipopt
-using ..KSTypes, ..MultiLevelMethods, ..ProblemTypes, ..SpectralMethods
+
+    using ..KSTypes, ..CoordinateSystems, ..SpectralMethods, ..CommonMethods, ..ProblemTypes, ..LinearSolvers
+
 
 export discretize_and_optimize, solve_optimal_control_problem, create_jump_model
 
@@ -23,7 +25,7 @@ Discretize the given problem in space and time using a simultaneous approach and
 """
 function discretize_and_optimize(problem::AbstractKSProblem, num_elements::NTuple{N,Int}, tspan::Tuple{T,T}, degree::Int, solver_options::KSSolverOptions) where {N,T<:Real}
     # Create spatial mesh
-    mesh = create_mesh(problem.domain, num_elements, degree, problem.coordinate_system)
+    mesh = Preprocessing.create_mesh(problem.domain, num_elements, degree, problem.coordinate_system)
 
     # Create time discretization
     t_nodes, t_weights = SpectralMethods.create_nodes(solver_options.time_elements, tspan...)
@@ -140,4 +142,3 @@ function extract_solution(model::Model, problem::KSOptimalControlProblem)
 end
 
 end # module Optimization
-

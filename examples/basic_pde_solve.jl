@@ -1,4 +1,4 @@
-using KitchenSink
+using ..KitchenSink
 
 # Define the PDE problem
 function pde_equation(x, t, u, ∇u, ∇²u)

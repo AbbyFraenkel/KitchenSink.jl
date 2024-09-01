@@ -1,45 +1,103 @@
 module ProblemTypes
 
-using ..KSTypes, ..SpectralMethods, ..Preprocessing, ..CoordinateSystems, ..AdaptiveMethods, ..MultiLevelMethods
-using LinearAlgebra, SparseArrays
+using LinearAlgebra, SparseArrays, StaticArrays
+using ..KSTypes, ..CoordinateSystems, ..SpectralMethods, ..CommonMethods, ..ErrorEstimation
+using ..AdaptiveMethods, ..IntergridOperators, ..MultiLevelMethods
+using ..Preconditioners, ..LinearSolvers, ..Preprocessing
 
-export assemble_problem, apply_boundary_conditions!, create_system_matrix_and_vector,
-    create_pde_system_matrix_and_vector, create_ode_system_matrix_and_vector,
-    create_dae_system_matrix_and_vector, create_bvdae_system_matrix_and_vector,
-    create_ide_system_matrix_and_vector, create_pide_system_matrix_and_vector,
-    create_moving_boundary_pde_system_matrix_and_vector, create_coupled_system_matrix_and_vector,
-    apply_boundary_condition!, is_boundary_point, get_global_index, quadrature_matrix,
-    find_element_containing_point, is_on_boundary
+export solve_problem, estimate_errors, refine_mesh
+export assemble_problem, apply_boundary_conditions!, create_system_matrix_and_vector
+
+export create_bvdae_system_matrix_and_vector, create_ide_system_matrix_and_vector,
+       create_pide_system_matrix_and_vector, create_moving_boundary_pde_system_matrix_and_vector,
+       create_coupled_system_matrix_and_vector, apply_boundary_condition!, is_boundary_point,
+       get_global_index, quadrature_matrix, is_on_boundary
+
+"""
+    solve_problem(problem::AbstractKSProblem, mesh::AbstractKSMesh, solver_options)
+
+Solves the given problem using the specified mesh and solver options.
+
+# Arguments
+- `problem::AbstractKSProblem`: The problem to be solved.
+- `mesh::AbstractKSMesh`: The mesh on which the problem is defined.
+- `solver_options`: The solver options to use.
+
+# Returns
+- `u`: The solution vector.
+- `mesh_hierarchy`: The hierarchy of meshes used during the solution process.
+"""
+function solve_problem(problem::AbstractKSProblem, mesh::AbstractKSMesh, solver_options)
+    A, b, mesh_hierarchy = assemble_problem(problem, solver_options)
+    u = LinearSolvers.solve_linear_system(A, b, solver_options.linear_solver)
+    return u, mesh_hierarchy
+end
+
+"""
+    estimate_errors(problem::AbstractKSProblem, solution, mesh::AbstractKSMesh)
+
+Estimates the errors in the solution for each element of the mesh.
+
+# Arguments
+- `problem::AbstractKSProblem`: The problem definition.
+- `solution`: The solution vector.
+- `mesh::AbstractKSMesh`: The mesh used for the problem.
+
+# Returns
+- `error_estimates`: A vector of error estimates for each element.
+"""
+function estimate_errors(problem::AbstractKSProblem, solution, mesh::AbstractKSMesh)
+    error_estimates = [ErrorEstimation.estimate_error(problem, solution, element) for element in mesh.elements]
+    return error_estimates
+end
+
+"""
+    refine_mesh(problem::AbstractKSProblem, mesh::AbstractKSMesh, error_estimates)
+
+Refines the mesh based on the provided error estimates.
+
+# Arguments
+- `problem::AbstractKSProblem`: The problem definition.
+- `mesh::AbstractKSMesh`: The current mesh.
+- `error_estimates`: A vector of error estimates for each element.
+
+# Returns
+- `refined_mesh`: The refined mesh.
+"""
+function refine_mesh(problem::AbstractKSProblem, mesh::AbstractKSMesh, error_estimates)
+    refined_mesh = Preprocessing.refine_mesh(mesh, error_estimates, problem.tolerance)
+    return refined_mesh
+end
 
 """
     assemble_problem(problem::AbstractKSProblem, options::KSSolverOptions)
 
-Assembles the problem by generating the initial mesh, creating a mesh hierarchy, and solving the system using adaptive refinement and multi-level methods.
+Assembles the system matrix and vector for the given problem and solver options.
 
-Arguments:
-- problem: AbstractKSProblem - The problem definition.
-- options: KSSolverOptions - Solver options including tolerance, max levels, etc.
+# Arguments
+- `problem::AbstractKSProblem`: The problem definition.
+- `options::KSSolverOptions`: The solver options.
 
-Returns:
-- A: Matrix - Assembled system matrix.
-- b: Vector - Right-hand side vector.
-- mesh_hierarchy: Vector{KSMesh} - Hierarchical mesh structure.
+# Returns
+- `A`: The system matrix.
+- `b`: The right-hand side vector.
+- `mesh_hierarchy`: The hierarchy of meshes used during assembly.
 """
 function assemble_problem(problem::AbstractKSProblem, options::KSSolverOptions)
-    base_mesh = generate_initial_mesh(problem.domain, problem.coordinate_system, options.initial_elements, options.initial_degree)
-    mesh_hierarchy = create_mesh_hierarchy(base_mesh, options.max_levels)
+    base_mesh = Preprocessing.generate_initial_mesh(problem.domain, problem.coordinate_system, options.initial_elements, options.initial_degree)
+    mesh_hierarchy = MultiLevelMethods.create_mesh_hierarchy(base_mesh, options.max_levels)
 
     for level in eachindex(mesh_hierarchy)
         current_mesh = mesh_hierarchy[level]
-        update_tensor_product_masks_with_trunk!(current_mesh)
-        update_location_matrices!(current_mesh)
+        Preprocessing.update_tensor_product_masks_with_trunk!(current_mesh)
+        Preprocessing.update_location_matrices!(current_mesh)
 
         A, b = create_system_matrix_and_vector(problem, current_mesh)
         apply_boundary_conditions!(A, b, current_mesh, problem.boundary_conditions)
 
-        u = A \ b  # Initial solution, could be replaced with a more sophisticated solver
+        u = LinearSolvers.solve_linear_system(A, b, options.linear_solver)
 
-        error_indicators = [compute_error_indicator(element, u[get_active_indices(element)], problem) for element in current_mesh.elements]
+        error_indicators = [ErrorEstimation.compute_error_indicator(element, u[Preprocessing.get_active_indices(element)], problem) for element in current_mesh.elements]
         max_error, _ = findmax(first.(error_indicators))
 
         if max_error < options.tolerance
@@ -48,20 +106,7 @@ function assemble_problem(problem::AbstractKSProblem, options::KSSolverOptions)
 
         if level < length(mesh_hierarchy)
             marked_elements = findall(e -> e[1] > options.tolerance, error_indicators)
-            mesh_hierarchy = refine_mesh_hierarchy(mesh_hierarchy, level, marked_elements)
-
-            current_mesh = adapt_mesh_superposition(current_mesh, u, problem, options.tolerance)
-
-            for (i, element) in enumerate(current_mesh.elements)
-                error, smoothness = error_indicators[i]
-                if error > options.tolerance
-                    if smoothness > options.smoothness_threshold
-                        current_mesh.elements[i] = p_refine(element)
-                    else
-                        current_mesh.elements[i] = hp_refine_superposition(element, error, smoothness, options.tolerance)[1]
-                    end
-                end
-            end
+            mesh_hierarchy = MultiLevelMethods.refine_mesh_hierarchy(mesh_hierarchy, level, marked_elements)
         end
     end
 
@@ -73,30 +118,43 @@ function assemble_problem(problem::AbstractKSProblem, options::KSSolverOptions)
 end
 
 """
-    apply_boundary_condition!(A::SparseMatrixCSC{Float64, Int}, b::Vector{Float64}, global_idx::Int, boundary_conditions::AbstractKSBoundaryCondition, x::Float64)
+    apply_boundary_conditions!(A::AbstractMatrix, b::AbstractVector, mesh::AbstractKSMesh, boundary_conditions::Function)
 
-Applies boundary conditions to the OCFE discretization matrix.
+Applies the boundary conditions to the system matrix and vector.
 
 # Arguments
-- `A::SparseMatrixCSC{Float64, Int}`: The OCFE discretization matrix.
-- `b::Vector{Float64}`: The right-hand side vector.
-- `global_idx::Int`: The global index of the point in the mesh.
-- `boundary_conditions::AbstractKSBoundaryCondition`: The boundary conditions.
-- `x::Float64`: The spatial coordinate.
+- `A::AbstractMatrix`: The system matrix.
+- `b::AbstractVector`: The right-hand side vector.
+- `mesh::AbstractKSMesh`: The mesh structure.
+- `boundary_conditions::Function`: The boundary conditions function.
 """
-function apply_boundary_condition!(A::SparseMatrixCSC{Float64,Int}, b::Vector{Float64}, global_idx::Int, boundary_conditions::AbstractKSBoundaryCondition, x::Float64)
-    if isa(boundary_conditions, KSDirichletBC)
-        A[global_idx, :] .= 0.0
-        A[global_idx, global_idx] = 1.0
-        b[global_idx] = boundary_conditions.value(x)
-    elseif isa(boundary_conditions, KSNeumannBC)
-        b[global_idx] += boundary_conditions.flux(x)
-    elseif isa(boundary_conditions, KSRobinBC)
-        A[global_idx, global_idx] += boundary_conditions.a(x) + boundary_conditions.b(x)
-        b[global_idx] += boundary_conditions.c(x)
-    else
-        throw(ArgumentError("Unsupported boundary condition type"))
+function apply_boundary_conditions!(A::AbstractMatrix, b::AbstractVector, mesh::AbstractKSMesh, boundary_conditions::Function)
+    for element in mesh.elements
+        for (i, point) in enumerate(element.collocation_points)
+            if is_boundary_point(point, mesh)
+                global_index = get_global_index(mesh, element, i)
+                apply_boundary_condition!(A, b, global_index, boundary_conditions, point)
+            end
+        end
     end
+end
+
+"""
+    apply_boundary_condition!(A::AbstractMatrix, b::AbstractVector, global_index::Int, boundary_conditions::Function, x::AbstractVector)
+
+Applies a boundary condition at a specific point in the system matrix and vector.
+
+# Arguments
+- `A::AbstractMatrix`: The system matrix.
+- `b::AbstractVector`: The right-hand side vector.
+- `global_index::Int`: The global index of the point.
+- `boundary_conditions::Function`: The boundary conditions function.
+- `x::AbstractVector`: The coordinates of the point.
+"""
+function apply_boundary_condition!(A::AbstractMatrix, b::AbstractVector, global_index::Int, boundary_conditions::Function, x::SVector)
+    A[global_index, :] .= 0
+    A[global_index, global_index] = 1
+    b[global_index] = boundary_conditions(x)
 end
 
 """
@@ -104,30 +162,30 @@ end
 
 Creates the system matrix and vector for different types of problems.
 
-Arguments:
-- problem: AbstractKSProblem - The problem definition.
-- mesh: KSMesh - The mesh structure.
+# Arguments
+- `problem::AbstractKSProblem`: The problem definition.
+- `mesh::KSMesh`: The mesh structure.
 
-Returns:
-- A: Matrix - System matrix.
-- b: Vector - Right-hand side vector.
+# Returns
+- `A`: The system matrix.
+- `b`: The right-hand side vector.
 """
 function create_system_matrix_and_vector(problem::AbstractKSProblem, mesh::KSMesh)
-    if isa(problem, KSPDEProblem)
+    if problem isa KSPDEProblem
         return create_pde_system_matrix_and_vector(problem, mesh)
-    elseif isa(problem, KSODEProblem)
+    elseif problem isa KSODEProblem
         return create_ode_system_matrix_and_vector(problem, mesh)
-    elseif isa(problem, KSDAEProblem)
+    elseif problem isa KSDAEProblem
         return create_dae_system_matrix_and_vector(problem, mesh)
-    elseif isa(problem, KSBVDAEProblem)
+    elseif problem isa KSBVDAEProblem
         return create_bvdae_system_matrix_and_vector(problem, mesh)
-    elseif isa(problem, KSIDEProblem)
+    elseif problem isa KSIDEProblem
         return create_ide_system_matrix_and_vector(problem, mesh)
-    elseif isa(problem, KSPIDEProblem)
+    elseif problem isa KSPIDEProblem
         return create_pide_system_matrix_and_vector(problem, mesh)
-    elseif isa(problem, KSMovingBoundaryPDEProblem)
+    elseif problem isa KSMovingBoundaryPDEProblem
         return create_moving_boundary_pde_system_matrix_and_vector(problem, mesh)
-    elseif isa(problem, KSCoupledProblem)
+    elseif problem isa KSCoupledProblem
         return create_coupled_system_matrix_and_vector(problem, mesh)
     else
         error("Unsupported problem type")
@@ -139,17 +197,16 @@ end
 
 Creates the system matrix and vector for a PDE problem.
 
-Arguments:
-- problem: KSPDEProblem - The PDE problem definition.
-- mesh: KSMesh - The mesh structure.
+# Arguments
+- `problem::KSPDEProblem`: The PDE problem definition.
+- `mesh::KSMesh`: The mesh structure.
 
-Returns:
-- A: Matrix - System matrix.
-- b: Vector - Right-hand side vector.
+# Returns
+- `A`: The system matrix.
+- `b`: The right-hand side vector.
 """
 function create_pde_system_matrix_and_vector(problem::KSPDEProblem, mesh::KSMesh)
-    A = create_OCFE_discretization(mesh, problem.pde, problem.boundary_conditions)
-    b = zeros(size(A, 1))
+    A, b = create_ocfe_discretization(mesh, problem)
     return A, b
 end
 
@@ -158,18 +215,18 @@ end
 
 Creates the system matrix and vector for an ODE problem.
 
-Arguments:
-- problem: KSODEProblem - The ODE problem definition.
-- mesh: KSMesh - The mesh structure.
+# Arguments
+- `problem::KSODEProblem`: The ODE problem definition.
+- `mesh::KSMesh`: The mesh structure.
 
-Returns:
-- A: Matrix - System matrix.
-- b: Vector - Right-hand side vector.
+# Returns
+- `A`: The system matrix.
+- `b`: The right-hand side vector.
 """
 function create_ode_system_matrix_and_vector(problem::KSODEProblem, mesh::KSMesh)
-    t_nodes = [node.coordinates[1] for node in mesh.elements]
+    t_nodes = [point[1] for element in mesh.elements for point in element.collocation_points]
     D = SpectralMethods.derivative_matrix(t_nodes)
-    A = I - problem.tspan[2] * D
+    A = I - (problem.tspan[2] - problem.tspan[1]) * D
     b = [problem.initial_conditions; zeros(length(t_nodes) - 1)]
     return A, b
 end
@@ -179,18 +236,18 @@ end
 
 Creates the system matrix and vector for a DAE problem.
 
-Arguments:
-- problem: KSDAEProblem - The DAE problem definition.
-- mesh: KSMesh - The mesh structure.
+# Arguments
+- `problem::KSDAEProblem`: The DAE problem definition.
+- `mesh::KSMesh`: The mesh structure.
 
-Returns:
-- A: Matrix - System matrix.
-- b: Vector - Right-hand side vector.
+# Returns
+- `A`: The system matrix.
+- `b`: The right-hand side vector.
 """
 function create_dae_system_matrix_and_vector(problem::KSDAEProblem, mesh::KSMesh)
-    t_nodes = [node.coordinates[1] for node in mesh.elements]
+    t_nodes = [point[1] for element in mesh.elements for point in element.collocation_points]
     D = SpectralMethods.derivative_matrix(t_nodes)
-    A_diff = I - problem.tspan[2] * D
+    A_diff = I - (problem.tspan[2] - problem.tspan[1]) * D
     A_alg = zeros(length(t_nodes), length(t_nodes))
     A = [A_diff zeros(size(A_diff)); zeros(size(A_alg)) A_alg]
     b = [problem.initial_conditions; zeros(length(t_nodes) - 1)]
@@ -202,16 +259,16 @@ end
 
 Creates the system matrix and vector for a Boundary Value DAE problem.
 
-Arguments:
-- problem: KSBVDAEProblem - The Boundary Value DAE problem definition.
-- mesh: KSMesh - The mesh structure.
+# Arguments
+- `problem::KSBVDAEProblem`: The Boundary Value DAE problem definition.
+- `mesh::KSMesh`: The mesh structure.
 
-Returns:
-- A: Matrix - System matrix.
-- b: Vector - Right-hand side vector.
+# Returns
+- `A`: The system matrix.
+- `b`: The right-hand side vector.
 """
 function create_bvdae_system_matrix_and_vector(problem::KSBVDAEProblem, mesh::KSMesh)
-    x_nodes = [node.coordinates[1] for node in mesh.elements]
+    x_nodes = [point[1] for element in mesh.elements for point in element.collocation_points]
     D = SpectralMethods.derivative_matrix(x_nodes)
     A_diff = D
     A_alg = zeros(length(x_nodes), length(x_nodes))
@@ -225,16 +282,16 @@ end
 
 Creates the system matrix and vector for an Integral-Differential Equation problem.
 
-Arguments:
-- problem: KSIDEProblem - The Integral-Differential Equation problem definition.
-- mesh: KSMesh - The mesh structure.
+# Arguments
+- `problem::KSIDEProblem`: The Integral-Differential Equation problem definition.
+- `mesh::KSMesh`: The mesh structure.
 
-Returns:
-- A: Matrix - System matrix.
-- b: Vector - Right-hand side vector.
+# Returns
+- `A`: The system matrix.
+- `b`: The right-hand side vector.
 """
 function create_ide_system_matrix_and_vector(problem::KSIDEProblem, mesh::KSMesh)
-    x_nodes = [node.coordinates[1] for node in mesh.elements]
+    x_nodes = [point[1] for element in mesh.elements for point in element.collocation_points]
     D = SpectralMethods.derivative_matrix(x_nodes)
     Q = quadrature_matrix(mesh)
     A = D + Q * problem.K.(x_nodes, x_nodes')
@@ -247,16 +304,16 @@ end
 
 Creates the system matrix and vector for a Partial Integral-Differential Equation problem.
 
-Arguments:
-- problem: KSPIDEProblem - The Partial Integral-Differential Equation problem definition.
-- mesh: KSMesh - The mesh structure.
+# Arguments
+- `problem::KSPIDEProblem`: The Partial Integral-Differential Equation problem definition.
+- `mesh::KSMesh`: The mesh structure.
 
-Returns:
-- A: Matrix - System matrix.
-- b: Vector - Right-hand side vector.
+# Returns
+- `A`: The system matrix.
+- `b`: The right-hand side vector.
 """
 function create_pide_system_matrix_and_vector(problem::KSPIDEProblem, mesh::KSMesh)
-    A_pde = create_OCFE_discretization(mesh, problem.pide, problem.boundary_conditions)
+    A_pde, _ = create_ocfe_discretization(mesh, problem)
     Q = quadrature_matrix(mesh)
     A_integral = Q * problem.K.(mesh.elements, mesh.elements')
     A = A_pde + A_integral
@@ -269,17 +326,16 @@ end
 
 Creates the system matrix and vector for a Moving Boundary PDE problem.
 
-Arguments:
-- problem: KSMovingBoundaryPDEProblem - The Moving Boundary PDE problem definition.
-- mesh: KSMesh - The mesh structure.
+# Arguments
+- `problem::KSMovingBoundaryPDEProblem`: The Moving Boundary PDE problem definition.
+- `mesh::KSMesh`: The mesh structure.
 
-Returns:
-- A: Matrix - System matrix.
-- b: Vector - Right-hand side vector.
+# Returns
+- `A`: The system matrix.
+- `b`: The right-hand side vector.
 """
 function create_moving_boundary_pde_system_matrix_and_vector(problem::KSMovingBoundaryPDEProblem, mesh::KSMesh)
-    A = create_OCFE_discretization(mesh, problem.pde, problem.boundary_conditions)
-    b = zeros(size(A, 1))
+    A, b = create_ocfe_discretization(mesh, problem)
     return A, b
 end
 
@@ -288,20 +344,20 @@ end
 
 Creates the system matrix and vector for a coupled problem.
 
-Arguments:
-- problem: KSCoupledProblem - The coupled problem definition.
-- mesh: KSMesh - The mesh structure.
+# Arguments
+- `problem::KSCoupledProblem`: The coupled problem definition.
+- `mesh::KSMesh`: The mesh structure.
 
-Returns:
-- A: Matrix - System matrix.
-- b: Vector - Right-hand side vector.
+# Returns
+- `A`: The system matrix.
+- `b`: The right-hand side vector.
 """
 function create_coupled_system_matrix_and_vector(problem::KSCoupledProblem, mesh::KSMesh)
-    sub_systems = [create_system_matrix_and_vector(sub_prob, mesh) for sub_prob in problem.problems]
+    sub_systems = [create_system_matrix_and_vector(sub_prob, mesh) for sub_prob in problem.subproblems]
     A = BlockDiagonal([sys[1] for sys in sub_systems])
     b = vcat([sys[2] for sys in sub_systems]...)
 
-    for (i, j) in problem.coupling_terms
+    for (i, j) in keys(problem.coupling_terms)
         A[i, j] = problem.coupling_terms[i, j](mesh)
     end
 
@@ -309,54 +365,64 @@ function create_coupled_system_matrix_and_vector(problem::KSCoupledProblem, mesh
 end
 
 """
-    apply_boundary_conditions!(A::AbstractMatrix, b::AbstractVector, mesh::KSMesh, boundary_conditions)
+    block_indices(block::Int, block_size::Int)
+
+Compute the indices for a block in a block matrix.
+
+# Arguments
+- `block::Int`: The block number.
+- `block_size::Int`: The size of the block.
+
+# Returns
+- `UnitRange{Int}`: The range of indices for the block.
+"""
+function block_indices(block::Int, block_size::Int)
+    start_idx = (block - 1) * block_size + 1
+    end_idx = block * block_size
+    return start_idx:end_idx
+end
+
+"""
+    apply_boundary_conditions!(A::AbstractArray, b::AbstractArray, mesh::KSMesh, boundary_conditions)
 
 Applies the boundary conditions to the system matrix and vector.
 
-Arguments:
-- A: AbstractMatrix - System matrix.
-- b: AbstractVector - Right-hand side vector.
-- mesh: KSMesh - The mesh structure.
-- boundary_conditions: Function - Boundary conditions function.
+# Arguments
+- `A::AbstractArray`: The system matrix.
+- `b::AbstractArray`: The right-hand side vector.
+- `mesh::KSMesh`: The mesh structure.
+- `boundary_conditions`: Function - Boundary conditions function.
 """
-function apply_boundary_conditions!(A::AbstractMatrix, b::AbstractVector, mesh::KSMesh, boundary_conditions)
+function apply_boundary_conditions!(A::AbstractArray, b::AbstractArray, mesh::KSMesh, boundary_conditions)
     for element in mesh.elements
-        for (i, point) in enumerate(element.points)
+        for (i, point) in enumerate(element.collocation_points)
             if is_boundary_point(point, mesh)
                 global_index = get_global_index(mesh, element, i)
-                for bc in boundary_conditions
-                    apply_boundary_condition!(A, b, global_index, bc, point.coordinates)
-                end
+                apply_boundary_condition!(A, b, global_index, boundary_conditions, point)
             end
         end
     end
 end
 
 """
-    is_boundary_point(point::KSPoint, mesh::KSMesh)
+    is_boundary_point(point::SVector{N,T}, mesh::KSMesh{T,N}) where {T<:Real,N}
 
 Determines if a point is a boundary point in the mesh.
 
-Arguments:
-- point: KSPoint - The point to check.
-- mesh: KSMesh - The mesh structure.
+# Arguments
+- `point::SVector{N,T}`: The point to check.
+- `mesh::KSMesh{T,N}`: The mesh structure.
 
-Returns:
-- Bool - True if the point is a boundary point, otherwise false.
+# Returns
+- `Bool`: True if the point is a boundary point, otherwise false.
 """
-function is_boundary_point(point::KSPoint, mesh::KSMesh)
-    element = find_element_containing_point(mesh, point)
-    if isnothing(element)
-        return false
+function is_boundary_point(point::SVector{N,T}, mesh::KSMesh{T,N}) where {T<:Real,N}
+    for element in mesh.elements
+        if any(x -> all(isapprox.(x, point)), element.collocation_points)
+            return true
+        end
     end
-
-    local_index = findfirst(p -> p == point, element.points)
-    if isnothing(local_index)
-        return false
-    end
-
-    mask = mesh.tensor_product_masks[element.id]
-    return any(i -> mask[i] && is_on_boundary(local_index, i, size(mask)), CartesianIndices(mask))
+    return false
 end
 
 """
@@ -364,13 +430,13 @@ end
 
 Gets the global index of a point in the mesh.
 
-Arguments:
-- mesh: KSMesh - The mesh structure.
-- element: KSElement - The element containing the point.
-- local_index: Int - The local index of the point in the element.
+# Arguments
+- `mesh::KSMesh`: The mesh structure.
+- `element::KSElement`: The element containing the point.
+- `local_index::Int`: The local index of the point in the element.
 
-Returns:
-- Int - The global index of the point in the mesh.
+# Returns
+- `Int`: The global index of the point in the mesh.
 """
 function get_global_index(mesh::KSMesh, element::KSElement, local_index::Int)
     return mesh.location_matrices[element.id][local_index]
@@ -381,22 +447,23 @@ end
 
 Creates the quadrature matrix for the mesh.
 
-Arguments:
-- mesh: KSMesh - The mesh structure.
+# Arguments
+- `mesh::KSMesh`: The mesh structure.
 
-Returns:
-- SparseMatrixCSC - The quadrature matrix.
+# Returns
+- `SparseMatrixCSC`: The quadrature matrix.
 """
 function quadrature_matrix(mesh::KSMesh)
-    n_total = sum(length(element.points) for element in mesh.elements)
+    n_total = total_dofs(mesh)
     Q = spzeros(n_total, n_total)
 
     for element in mesh.elements
-        for (i, point) in enumerate(element.points)
-            if !isnothing(point.weight)
-                global_i = get_global_index(mesh, element, i)
-                Q[global_i, global_i] = point.weight
-            end
+        std_elem = mesh.standard_elements[(element.level, element.polynomial_degree)]
+        weights = std_elem.collocation_weights
+
+        for (i, weight) in enumerate(weights)
+            global_i = get_global_index(mesh, element, i)
+            Q[global_i, global_i] = weight
         end
     end
 
@@ -404,38 +471,17 @@ function quadrature_matrix(mesh::KSMesh)
 end
 
 """
-    find_element_containing_point(mesh::KSMesh, point::KSPoint)
-
-Finds the element containing a given point.
-
-Arguments:
-- mesh: KSMesh - The mesh structure.
-- point: KSPoint - The point to find.
-
-Returns:
-- Union{Nothing, KSElement} - The element containing the point, or nothing if not found.
-"""
-function find_element_containing_point(mesh::KSMesh, point::KSPoint)
-    for element in mesh.elements
-        if point in element.points
-            return element
-        end
-    end
-    return nothing
-end
-
-"""
     is_on_boundary(local_index::Int, mask_index::CartesianIndex, mask_size::Tuple)
 
 Determines if a point is on the boundary of an element.
 
-Arguments:
-- local_index: Int - The local index of the point in the element.
-- mask_index: CartesianIndex - The index of the tensor product mask.
-- mask_size: Tuple - The size of the tensor product mask.
+# Arguments
+- `local_index::Int`: The local index of the point in the element.
+- `mask_index::CartesianIndex`: The index of the tensor product mask.
+- `mask_size::Tuple`: The size of the tensor product mask.
 
-Returns:
-- Bool - True if the point is on the boundary, otherwise false.
+# Returns
+- `Bool`: True if the point is on the boundary, otherwise false.
 """
 function is_on_boundary(local_index::Int, mask_index::CartesianIndex, mask_size::Tuple)
     for dim in eachindex(mask_size)
@@ -447,6 +493,3 @@ function is_on_boundary(local_index::Int, mask_index::CartesianIndex, mask_size:
 end
 
 end # module ProblemTypes
-
-
-

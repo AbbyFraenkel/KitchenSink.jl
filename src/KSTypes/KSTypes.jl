@@ -1,730 +1,1166 @@
 module KSTypes
 
-using LinearAlgebra
+using StaticArrays, SparseArrays
 
-"""
-# KSTypes
+# Exported types
+export AbstractKSElement, AbstractKSMesh, AbstractKSProblem, AbstractKSCoordinateSystem
+export AbstractKSBoundaryCondition, AbstractKSBasisFunction, AbstractKSSolver, AbstractKSOptimizationProblem
+export AbstractKSLinearSolver, StandardElement, KSBasisFunction, KSElement, KSMesh, KSProblem
+export KSODEProblem, KSBVDAEProblem, KSCoupledProblem, KSIDEProblem, KSPDEProblem, KSDAEProblem
+export KSMovingBoundaryPDEProblem, KSPIDEProblem, KSDiscretizedProblem, KSOptimalControlProblem
+export KSCartesianCoordinates, KSPolarCoordinates, KSCylindricalCoordinates, KSSphericalCoordinates
+export KSDirichletBC, KSRobinBC, KSNeumannBC, KSSolverOptions, KSDirectSolver, KSIterativeSolver, KSAMGSolver
 
-Defines various types used in the KitchenSink package, including abstract and concrete types for systems, problems, solvers, meshes, elements, basis functions, boundary conditions, coordinate systems, and optimization.
-
-"""
-
-# Export all types
-export AbstractKSSystem, AbstractKSProblem, AbstractKSSolver, AbstractKSMesh, AbstractKSElement
-export AbstractKSBasisFunction, AbstractKSBoundaryCondition, AbstractKSCoordinateSystem
-export AbstractKSPDEProblem, AbstractKSBVDAEProblem, AbstractKSIDEProblem, AbstractKSPoint
-export AbstractKSLinearSolver, AbstractKSOptimizer, AbstractKSODEProblem, AbstractKSDAEProblem
-export AbstractKSTimeSteppingMethod, AbstractKSOptimizationProblem, AbstractKSDiscretization
-export KSPoint, KSBasisFunction, KSElement, KSMesh, KSProblem, KSSolverOptions, KSSolver
-export KSCartesianCoordinates, KSPolarCoordinates, KSSphericalCoordinates, KSCylindricalCoordinates
-export KSDirichletBC, KSNeumannBC, KSRobinBC, KSBVDAEProblem, KSCoupledProblem, KSIDEProblem
-export KSODEProblem, KSPDEProblem, KSDAEProblem, KSMovingBoundaryPDEProblem, KSPIDEProblem
-export KSDiscretizedProblem, KSTimeSteppingSolver, KSDirectSolver, KSIterativeSolver, KSAMGSolver
-export KSGradientDescentOptimizer, KSNewtonOptimizer, KSLBFGSOptimizer, KSOptimalControlProblem
-export KSMultiProblem
-
-# Enums
-@enum CoordinateSystem Cartesian Polar Spherical Cylindrical
+export is_callable, tuple_if_active, validate_range
 
 # Abstract types
 
 """
-    AbstractKSSystem
+	AbstractKSElement{T<:Number, N}
 
-Abstract type for Kitchen Sink systems definitions, typically including multiple problems.
+An abstract type representing an element in N-dimensional space.
 """
-abstract type AbstractKSSystem end
-
-"""
-    AbstractKSProblem{T, N}
-
-Abstract type for Kitchen Sink problem definitions.
-"""
-abstract type AbstractKSProblem{T,N} <: AbstractKSSystem end
+abstract type AbstractKSElement{T <: Number, N} end
 
 """
-    AbstractKSODEProblem{T, N}
+	AbstractKSMesh{T<:Number, N}
 
-Abstract type for ODE problems in the Kitchen Sink framework.
+An abstract type representing a mesh in N-dimensional space.
 """
-abstract type AbstractKSODEProblem{T,N} <: AbstractKSProblem{T,N} end
-
-"""
-    AbstractKSPDEProblem{T, N}
-
-Abstract type for PDE problems in the Kitchen Sink framework.
-"""
-abstract type AbstractKSPDEProblem{T,N} <: AbstractKSProblem{T,N} end
+abstract type AbstractKSMesh{T <: Number, N} end
 
 """
-    AbstractKSDAEProblem{T, N}
+	AbstractKSProblem
 
-Abstract type for DAE problems in the Kitchen Sink framework.
+An abstract type representing a general problem in the KitchenSink framework.
 """
-abstract type AbstractKSDAEProblem{T,N} <: AbstractKSProblem{T,N} end
-
-"""
-    AbstractKSBVDAEProblem{T, N}
-
-Abstract type for Boundary Value Differential-Algebraic Equation problems.
-"""
-abstract type AbstractKSBVDAEProblem{T,N} <: AbstractKSDAEProblem{T,N} end
+abstract type AbstractKSProblem end
 
 """
-    AbstractKSIDEProblem{T, N}
+	AbstractKSCoordinateSystem
 
-Abstract type for Integral-Differential Equation problems.
+An abstract type representing a coordinate system.
 """
-abstract type AbstractKSIDEProblem{T,N} <: AbstractKSProblem{T,N} end
-
-"""
-    AbstractKSSolver{T}
-
-Abstract type for Kitchen Sink solvers.
-"""
-abstract type AbstractKSSolver{T} end
+abstract type AbstractKSCoordinateSystem end
 
 """
-    AbstractKSMesh{T, N}
+	AbstractKSBoundaryCondition
 
-Abstract type for Kitchen Sink mesh representations.
+An abstract type representing a boundary condition.
 """
-abstract type AbstractKSMesh{T,N} end
-
-"""
-    AbstractKSElement{T}
-
-Abstract type for Kitchen Sink mesh elements.
-"""
-abstract type AbstractKSElement{T} <: AbstractKSMesh{T,1} end
+abstract type AbstractKSBoundaryCondition end
 
 """
-    AbstractKSBasisFunction
+	AbstractKSBasisFunction
 
-Abstract type for Kitchen Sink basis functions.
+An abstract type representing a basis function.
 """
 abstract type AbstractKSBasisFunction end
 
 """
-    AbstractKSBoundaryCondition{T}
+	AbstractKSSolver
 
-Abstract type for Kitchen Sink boundary conditions.
+An abstract type representing a solver.
 """
-abstract type AbstractKSBoundaryCondition{T} end
-
-"""
-    AbstractKSCoordinateSystem{N}
-
-Abstract type for Kitchen Sink coordinate systems.
-"""
-abstract type AbstractKSCoordinateSystem{N} end
+abstract type AbstractKSSolver end
 
 """
-    AbstractKSLinearSolver{T}
+	AbstractKSOptimizationProblem
 
-Abstract type for linear solvers in the Kitchen Sink framework.
+An abstract type representing an optimization problem.
 """
-abstract type AbstractKSLinearSolver{T} <: AbstractKSSolver{T} end
-
-"""
-    AbstractKSOptimizer{T}
-
-Abstract base type for optimizers.
-"""
-abstract type AbstractKSOptimizer{T} <: AbstractKSSolver{T} end
+abstract type AbstractKSOptimizationProblem end
 
 """
-    AbstractKSPoint{T}
+	AbstractKSLinearSolver
 
-Abstract type for points in a grid.
+An abstract type representing a linear solver.
 """
-abstract type AbstractKSPoint{T} <: AbstractKSMesh{T,1} end
+abstract type AbstractKSLinearSolver end
 
-"""
-    AbstractKSOptimizationProblem{T, N}
+# Helper functions
 
-Abstract type for optimization problems.
-"""
-abstract type AbstractKSOptimizationProblem{T,N} <: AbstractKSProblem{T,N} end
-
-"""
-   AbstractKSDiscretization{T}
-
-Abstract type for discretization.
-"""
-abstract type AbstractKSDiscretization{T} end
-
-"""
-   AbstractKSTimeSteppingMethod{T}
-
-Abstract type for time stepping methods.
-"""
-abstract type AbstractKSTimeSteppingMethod{T} end
+to_abstract_vector(x::AbstractVector) = x
+to_abstract_vector(x::StaticArray) = collect(x)
+to_abstract_vector(x) = [x...]
 
 # Concrete types
 
 """
-    KSPoint{T<:Real}
+	StandardElement{T<:Number, N}
 
-Represents a point in the Kitchen Sink framework, which could be a collocation point or a boundary point.
+Represents precomputed data for elements of a specific level and polynomial degree.
 
 # Fields
-- `coordinates::Vector{T}`: Coordinates of the point
-- `weight::Union{Nothing, T}`: Optional weight for the point (used for collocation points)
+- `points_with_boundary::Vector{SVector{N, T}}`: Points including boundary points in reference space.
+- `collocation_points::Vector{SVector{N, T}}`: Collocation points in reference space.
+- `collocation_weights::Vector{T}`: Collocation weights for numerical integration.
+- `differentiation_matrices::Vector{Matrix{T}}`: Differentiation matrices.
+- `quadrature_matrices::Vector{Matrix{T}}`: Quadrature matrices.
+- `level::Int`: The refinement level of the element.
 """
-mutable struct KSPoint{T<:Real} <: AbstractKSPoint{T}
-    coordinates::Vector{T}
-    weight::Union{Nothing,T}
+struct StandardElement{T <: Number, N}
+	points_with_boundary::Vector{NTuple{N, T}}
+	collocation_points::Vector{NTuple{N, T}}
+	collocation_weights::Vector{T}
+	differentiation_matrices::Vector{Matrix{T}}
+	quadrature_matrices::Vector{Matrix{T}}
+	level::Int
+
+	function StandardElement(points_with_boundary::Vector{NTuple{N, T}},
+							 collocation_points::Vector{NTuple{N, T}},
+							 collocation_weights::Vector{T},
+							 differentiation_matrices::Vector{Matrix{T}},
+							 quadrature_matrices::Vector{Matrix{T}},
+							 level::Int) where {T <: Number, N}
+		if level < 0
+			throw(ArgumentError("Level must be non-negative"))
+		end
+		new{T, N}(points_with_boundary, collocation_points, collocation_weights,
+				  differentiation_matrices, quadrature_matrices, level)
+	end
 end
 
 """
-    KSBasisFunction
+	KSBasisFunction <: AbstractKSBasisFunction
 
-Represents a basis function in the Kitchen Sink framework.
+Represents a basis function.
 
 # Fields
-- `id::Int`: Unique identifier for the basis function
-- `function_handle::Function`: The actual basis function
-- `is_removable::Bool`: Flag indicating if the basis function can be removed during adaptivity
-- `degree::Int`: Polynomial degree of the basis function
+- `id::Int`: An identifier for the basis function.
+- `function_handle::Function`: The actual function representing the basis function.
 """
 mutable struct KSBasisFunction <: AbstractKSBasisFunction
-    id::Int
-    function_handle::Function
-    is_removable::Bool
-    degree::Int
+	id::Int
+	function_handle::Function
+
+	function KSBasisFunction(id::Int, function_handle::Function = x -> x)
+		if id <= 0
+			throw(ArgumentError("Basis function ID must be positive"))
+		end
+		if !isa(function_handle, Function)
+			throw(ArgumentError("function_handle must be a Function, but got $(typeof(function_handle))"))
+		end
+		new(id, function_handle)
+	end
 end
 
 """
-    KSElement{T<:Real}
+	KSElement{T<:Number, N} <: AbstractKSElement{T, N}
 
-Represents an element in the Kitchen Sink mesh.
+Represents an element in N-dimensional space.
 
 # Fields
-- `id::Int`: Unique identifier for the element
-- `points::Vector{KSPoint{T}}`: Points in the element (collocation and boundary points)
-- `basis_functions::Vector{KSBasisFunction}`: Basis functions in the element
-- `neighbors::Union{Nothing, Vector{KSElement{T}}}`: Neighboring elements
-- `parent::Union{Nothing, KSElement{T}}`: Parent element
-- `children::Union{Nothing, Vector{KSElement{T}}}`
-- `level::Int`: Refinement level of the element
-- `polynomial_degree::Int`: Polynomial degree of the element
-- `error_estimate::T`: Local error estimate for this element
-- `differentiation_matrices::Vector{Matrix{T}}`: Differentiation matrices for each basis function
+- `id::Int`: An identifier for the element.
+- `level::Int`: The refinement level of the element.
+- `polynomial_degree::NTuple{N, Int}`: The polynomial degree of the element.
+- `parent::Union{Nothing, Int}`: The ID of the parent element.
+- `children::Union{Nothing, Vector{Int}}`: IDs of child elements.
+- `neighbors::Union{Nothing, Vector{Int}}`: IDs of neighboring elements.
+- `is_leaf::Bool`: Flag indicating if the element is a leaf in the refinement tree.
+- `error_estimate::T`: An estimate of the error associated with the element.
+- `legendre_decay_rate::T`: The decay rate of Legendre polynomial coefficients for adaptivity.
 """
-mutable struct KSElement{T<:Real} <: AbstractKSElement{T}
-    id::Int
-    points::Vector{KSPoint{T}}
-    basis_functions::Vector{KSBasisFunction}
-    neighbors::Union{Nothing,Vector{KSElement{T}}}
-    parent::Union{Nothing,KSElement{T}}
-    children::Union{Nothing,Vector{KSElement{T}}}
-    level::Int
-    polynomial_degree::Int
-    error_estimate::T
-    differentiation_matrices::Vector{Matrix{T}}
-end
-"""
-    KSMesh{T<:Real, N}
+mutable struct KSElement{T <: Number, N} <: AbstractKSElement{T, N}
+	id::Int
+	level::Int
+	polynomial_degree::NTuple{N, Int}
+	parent::Union{Nothing, Int}
+	children::Union{Nothing, Vector{Int}}
+	neighbors::Union{Nothing, Vector{Int}}
+	is_leaf::Bool
+	error_estimate::T
+	legendre_decay_rate::T
 
-Represents the entire mesh structure in the Kitchen Sink framework.
+	function KSElement{T, N}(id::Int, level::Int, polynomial_degree::NTuple{N, Int};
+							 parent::Union{Nothing, Int} = nothing,
+							 children::Union{Nothing, Vector{Int}} = nothing,
+							 neighbors::Union{Nothing, Vector{Int}} = nothing,
+							 is_leaf::Bool = true,
+							 error_estimate::Union{Nothing, T} = nothing,
+							 legendre_decay_rate::Union{Nothing, T} = nothing) where {T <: Number, N}
+		if id <= 0
+			throw(ArgumentError("Element ID must be positive"))
+		end
+		if level < 0
+			throw(ArgumentError("Element level must be non-negative"))
+		end
+		if any(p -> p < 0, polynomial_degree)
+			throw(ArgumentError("Polynomial degrees must be non-negative"))
+		end
+		error_estimate = error_estimate === nothing ? zero(T) : error_estimate
+		legendre_decay_rate = legendre_decay_rate === nothing ? zero(T) : legendre_decay_rate
+
+		new{T, N}(id, level, polynomial_degree, parent, children, neighbors, is_leaf, error_estimate, legendre_decay_rate)
+	end
+end
+
+# Convenience constructor for Float64
+function KSElement(id::Int, level::Int, polynomial_degree::NTuple{N, Int}; kwargs...) where N
+	KSElement{Float64, N}(id, level, polynomial_degree; kwargs...)
+end
+
+"""
+	KSMesh{T <: Number, N} <: AbstractKSMesh{T, N}
+
+Represents a mesh used in the KitchenSink package.
 
 # Fields
-- `elements::Vector{KSElement{T}}`: All elements in the mesh
-- `tensor_product_masks::AbstractArray{Bool}`: Tensor product masks for each element
-- `location_matrices::Vector{Dict{Int, Int}}`: Location matrices for each element
-- `basis_functions::Vector{KSBasisFunction}`: All basis functions used in the mesh
-- `global_error_estimate::Real`: Global error estimate for the entire mesh
-- `dimensions::Int`: Number of dimensions in the mesh
+- `elements::Vector{KSElement{T, N}}`: Vector of `KSElement` objects representing the elements in the mesh.
+- `tensor_product_masks::Vector{AbstractArray{Bool, N}}`: Vector of abstract arrays of booleans with `N` dimensions, representing the tensor product masks.
+- `location_matrices::Vector{Dict{Int, Int}}`: Vector of dictionaries mapping integers to integers, representing the location matrices.
+- `global_error_estimate::T`: Global error estimate of type `T`.
 """
-mutable struct KSMesh{T<:Real,N} <: AbstractKSMesh{T,N}
-    elements::Vector{KSElement{T}}
-    tensor_product_masks::AbstractArray{Bool}
-    location_matrices::Vector{Dict{Int,Int}}
-    basis_functions::Vector{KSBasisFunction}
-    global_error_estimate::Real
-    dimensions::Int
+mutable struct KSMesh{T <: Number, N} <: AbstractKSMesh{T, N}
+	elements::Vector{KSElement{T, N}}
+	tensor_product_masks::Vector{AbstractArray{Bool, N}}
+	location_matrices::Vector{Dict{Int, Int}}
+	global_error_estimate::T
+
+	function KSMesh{T, N}(elements::Vector{KSElement{T, N}},
+						  tensor_product_masks::Vector{<:AbstractArray{Bool, N}} = Vector{AbstractArray{Bool, N}}(),
+						  location_matrices::Vector{Dict{Int, Int}} = Vector{Dict{Int, Int}}(),
+						  global_error_estimate::T = zero(T)) where {T <: Number, N}
+		if isempty(elements)
+			throw(ArgumentError("Elements vector cannot be empty"))
+		end
+		new{T, N}(elements, tensor_product_masks, location_matrices, global_error_estimate)
+	end
+end
+
+# Convenience constructor
+function KSMesh(elements::Vector{KSElement{T, N}},
+				tensor_product_masks::Vector{<:AbstractArray{Bool, N}} = Vector{AbstractArray{Bool, N}}(),
+				location_matrices::Vector{Dict{Int, Int}} = Vector{Dict{Int, Int}}(),
+				global_error_estimate::T = zero(T)) where {T <: Number, N}
+	KSMesh{T, N}(elements, tensor_product_masks, location_matrices, global_error_estimate)
+end
+
+# Constructor to accept Vector{BitMatrix}
+function KSMesh(elements::Vector{KSElement{T, N}},
+				tensor_product_masks::Vector{BitMatrix},
+				location_matrices::Vector{Dict{Int, Int}},
+				global_error_estimate::T) where {T <: Number, N}
+	converted_masks = Vector{AbstractArray{Bool, N}}(undef, length(tensor_product_masks))
+	for (i, mask) in enumerate(tensor_product_masks)
+		converted_masks[i] = convert(Array{Bool, N}, mask)
+	end
+	KSMesh{T, N}(elements, converted_masks, location_matrices, global_error_estimate)
 end
 
 """
-    KSProblem{T<:Real, N, C<:AbstractKSCoordinateSystem{N}}
+	KSProblem{T <: Number, N} <: AbstractKSProblem
 
-Represents a problem to be solved using the Kitchen Sink framework.
+Represents a general problem in N-dimensional space in the KitchenSink framework.
 
 # Fields
-- `equation::Function`: The differential operator of the problem
-- `domain::NTuple{N, Tuple{T, T}}`: The domain of the problem
-- `boundary_conditions::Function`: The boundary conditions of the problem
-- `coordinate_system::C`: The coordinate system of the problem
+- `equation::Function`: The governing equation of the problem.
+- `boundary_conditions::Union{Nothing, Function, Vector{Function}}`: The boundary conditions.
+- `domain::NTuple{N, Tuple{T, T}}`: The domain over which the problem is defined.
+- `initial_conditions::Union{Nothing, Vector{T}, Function}`: The initial conditions for the problem.
+- `tspan::Union{Nothing, Tuple{T, T}}`: The time span over which the problem is defined.
+- `continuity_order::Int`: The desired order of continuity (e.g., C^k continuity).
 """
-mutable struct KSProblem{T<:Real,N,C<:AbstractKSCoordinateSystem{N}} <: AbstractKSProblem{T,N}
-    equation::Function
-    domain::NTuple{N,Tuple{T,T}}
-    boundary_conditions::Function
-    coordinate_system::C
+mutable struct KSProblem{T <: Number, N} <: AbstractKSProblem
+	equation::Function
+	boundary_conditions::Union{Nothing, Function, Vector{Function}}
+	domain::NTuple{N, Tuple{T, T}}
+	initial_conditions::Union{Nothing, Vector{T}, Function}
+	tspan::Union{Nothing, Tuple{T, T}}
+	continuity_order::Int
+
+	function KSProblem(equation::Function,
+					   boundary_conditions::Union{Nothing, Function, Vector{Function}},
+					   domain::NTuple{N, Tuple{T, T}},
+					   initial_conditions::Union{Nothing, Vector{T}, Function} = nothing,
+					   tspan::Union{Nothing, Tuple{T, T}} = nothing,
+					   continuity_order::Int = 2) where {T <: Number, N}
+		# Type checks
+		if !isa(equation, Function)
+			throw(ArgumentError("equation must be a Function, but got $(typeof(equation))"))
+		end
+		if !(isa(boundary_conditions, Function) || isa(boundary_conditions, Vector{<:Function}) || isnothing(boundary_conditions))
+			throw(ArgumentError("boundary_conditions must be a Function, Vector of Functions, or Nothing, but got $(typeof(boundary_conditions))"))
+		end
+		if !isa(domain, NTuple{N, Tuple{T, T}})
+			throw(ArgumentError("domain must be an NTuple of Tuples, but got $(typeof(domain))"))
+		end
+		if continuity_order < 0
+			throw(ArgumentError("Continuity order must be non-negative"))
+		end
+
+		new{T, N}(equation, boundary_conditions, domain, initial_conditions, tspan, continuity_order)
+	end
 end
 
 """
-    KSCartesianCoordinates{N, T<:Real}
+	KSODEProblem{T <: Number, N} <: AbstractKSProblem
 
-A struct representing Cartesian coordinates in N-dimensional space.
+Represents an ordinary differential equation (ODE) problem in N-dimensional space.
 
 # Fields
-- `coordinates::NTuple{N, Union{T, Nothing}}`: Coordinates in the N-dimensional Cartesian system
+- `ode::Function`: The ODE function defining the differential equation.
+- `boundary_conditions::Function`: The function specifying the boundary conditions.
+- `domain::NTuple{N, Tuple{T, T}}`: The spatial domain over which the problem is defined.
+- `initial_conditions::AbstractVector{T}`: The initial conditions for the problem.
+- `tspan::Tuple{T, T}`: The time span over which the problem is defined.
 """
-mutable struct KSCartesianCoordinates{N,T<:Real} <: AbstractKSCoordinateSystem{N}
-    coordinates::NTuple{N,Union{T,Nothing}}
+struct KSODEProblem{T <: Number, N} <: AbstractKSProblem
+	ode::Function
+	boundary_conditions::Function
+	domain::NTuple{N, Tuple{T, T}}
+	initial_conditions::AbstractVector{T}
+	tspan::Tuple{T, T}
+
+	function KSODEProblem(ode::Function, boundary_conditions::Function,
+						  domain::NTuple{N, Tuple{T, T}}, initial_conditions::AbstractVector{T},
+						  tspan::Tuple{T, T}) where {T <: Number, N}
+		# Type checks
+		if !isa(ode, Function)
+			throw(ArgumentError("ODE must be a Function, but got $(typeof(ode))"))
+		end
+		if !isa(boundary_conditions, Function)
+			throw(ArgumentError("boundary_conditions must be a Function, but got $(typeof(boundary_conditions))"))
+		end
+		if !isa(domain, NTuple{N, Tuple{T, T}})
+			throw(ArgumentError("domain must be an NTuple of Tuples, but got $(typeof(domain))"))
+		end
+		if !isa(initial_conditions, AbstractVector{T})
+			throw(ArgumentError("initial_conditions must be a vector of $T, but got $(typeof(initial_conditions))"))
+		end
+		if !isa(tspan, Tuple{T, T})
+			throw(ArgumentError("tspan must be a Tuple of $T, but got $(typeof(tspan))"))
+		end
+
+		new{T, N}(ode, boundary_conditions, domain, initial_conditions, tspan)
+	end
 end
 
 """
-    KSPolarCoordinates{T<:Real}
+	KSBVDAEProblem{T <: Number, N} <: AbstractKSProblem
 
-A struct representing polar coordinates in 2-dimensional space.
+Represents a boundary value differential algebraic equation (BVDAE) problem in N-dimensional space.
 
 # Fields
-- `r::Union{T, Nothing}`: Radial coordinate
-- `θ::Union{T, Nothing}`: Angular coordinate
+- `f::Function`: The differential equation function.
+- `g::Function`: The algebraic constraint function.
+- `bc::Function`: The function specifying the boundary conditions.
+- `domain::NTuple{N, Tuple{T, T}}`: The spatial domain over which the problem is defined.
+- `initial_conditions::AbstractVector{T}`: The initial conditions for the problem.
+- `algebraic_vars::AbstractVector{Bool}`: Flags indicating which variables are algebraic.
+- `tspan::Tuple{T, T}`: The time span of the problem.
 """
-mutable struct KSPolarCoordinates{T<:Real} <: AbstractKSCoordinateSystem{2}
-    r::Union{T,Nothing}
-    θ::Union{T,Nothing}
+struct KSBVDAEProblem{T <: Number, N} <: AbstractKSProblem
+	f::Function
+	g::Function
+	bc::Function
+	domain::NTuple{N, Tuple{T, T}}
+	initial_conditions::AbstractVector{T}
+	algebraic_vars::AbstractVector{Bool}
+	tspan::Tuple{T, T}
+
+	function KSBVDAEProblem(f::Function, g::Function, bc::Function,
+							domain::NTuple{N, Tuple{T, T}}, initial_conditions::AbstractVector{T},
+							algebraic_vars::AbstractVector{Bool}, tspan::Tuple{T, T}) where {T <: Number, N}
+		# Type checks
+		if !isa(f, Function)
+			throw(ArgumentError("f must be a Function, but got $(typeof(f))"))
+		end
+		if !isa(g, Function)
+			throw(ArgumentError("g must be a Function, but got $(typeof(g))"))
+		end
+		if !isa(bc, Function)
+			throw(ArgumentError("bc must be a Function, but got $(typeof(bc))"))
+		end
+		if !isa(domain, NTuple{N, Tuple{T, T}})
+			throw(ArgumentError("domain must be an NTuple of Tuples, but got $(typeof(domain))"))
+		end
+		if length(initial_conditions) != length(algebraic_vars)
+			throw(ArgumentError("Length of initial_conditions must match length of algebraic_vars"))
+		end
+		if !isa(tspan, Tuple{T, T})
+			throw(ArgumentError("tspan must be a Tuple of $T, but got $(typeof(tspan))"))
+		end
+
+		new{T, N}(f, g, bc, domain, initial_conditions, algebraic_vars, tspan)
+	end
 end
 
 """
-    KSSphericalCoordinates{T<:Real}
+	KSCoupledProblem
 
-A struct representing spherical coordinates in 3-dimensional space.
+Represents a coupled problem consisting of multiple subproblems.
 
 # Fields
-- `r::Union{T, Nothing}`: Radial coordinate
-- `θ::Union{T, Nothing}`: Polar angle
-- `φ::Union{T, Nothing}`: Azimuthal angle
+- `problems::AbstractVector{<:AbstractKSProblem}`: Array of subproblems.
+- `coupling_terms::Matrix{Union{Nothing, Function}}`: Matrix of coupling terms between subproblems.
 """
-mutable struct KSSphericalCoordinates{T<:Real} <: AbstractKSCoordinateSystem{3}
-    r::Union{T,Nothing}
-    θ::Union{T,Nothing}
-    φ::Union{T,Nothing}
+struct KSCoupledProblem
+	problems::AbstractVector{<:AbstractKSProblem}
+	coupling_terms::Matrix{Union{Nothing, Function}}
+
+	function KSCoupledProblem(problems::AbstractVector{<:AbstractKSProblem},
+							  coupling_terms::Matrix{Union{Nothing, Function}})
+		# Type checks
+		if !isa(problems, AbstractVector{<:AbstractKSProblem})
+			throw(ArgumentError("problems must be an AbstractVector of AbstractKSProblem, but got $(typeof(problems))"))
+		end
+		if !isa(coupling_terms, Matrix{Union{Nothing, Function}})
+			throw(ArgumentError("coupling_terms must be a Matrix of Union{Nothing, Function}, but got $(typeof(coupling_terms))"))
+		end
+		if size(coupling_terms, 1) != size(coupling_terms, 2) || size(coupling_terms, 1) != length(problems)
+			throw(ArgumentError("Inconsistent coupling terms dimensions"))
+		end
+		new(problems, coupling_terms)
+	end
 end
 
 """
-    KSCylindricalCoordinates{T<:Real}
+	KSIDEProblem{T <: Number, N} <: AbstractKSProblem
 
-A struct representing cylindrical coordinates in 3-dimensional space.
+Represents an integro-differential equation (IDE) problem in N-dimensional space.
 
 # Fields
-- `r::Union{T, Nothing}`: Radial coordinate
-- `θ::Union{T, Nothing}`: Angular coordinate
-- `z::Union{T, Nothing}`: Axial coordinate
+- `f::Function`: The function defining the differential equation.
+- `K::Function`: The kernel function defining the integral term.
+- `boundary_conditions::Function`: The function specifying the boundary conditions.
+- `domain::NTuple{N, Tuple{T, T}}`: The spatial domain over which the problem is defined.
+- `initial_conditions::AbstractVector{T}`: The initial conditions for the problem.
+- `tspan::Tuple{T, T}`: The time span over which the problem is defined.
 """
-mutable struct KSCylindricalCoordinates{T<:Real} <: AbstractKSCoordinateSystem{3}
-    r::Union{T,Nothing}
-    θ::Union{T,Nothing}
-    z::Union{T,Nothing}
+struct KSIDEProblem{T <: Number, N} <: AbstractKSProblem
+	f::Function
+	K::Function
+	boundary_conditions::Function
+	domain::NTuple{N, Tuple{T, T}}
+	initial_conditions::AbstractVector{T}
+	tspan::Tuple{T, T}
+
+	function KSIDEProblem(f::Function, K::Function, boundary_conditions::Function,
+						  domain::NTuple{N, Tuple{T, T}}, initial_conditions::AbstractVector{T},
+						  tspan::Tuple{T, T}) where {T <: Number, N}
+		# Type checks
+		if !isa(f, Function)
+			throw(ArgumentError("f must be a Function, but got $(typeof(f))"))
+		end
+		if !isa(K, Function)
+			throw(ArgumentError("K must be a Function, but got $(typeof(K))"))
+		end
+		if !isa(boundary_conditions, Function)
+			throw(ArgumentError("boundary_conditions must be a Function, but got $(typeof(boundary_conditions))"))
+		end
+		if !isa(domain, NTuple{N, Tuple{T, T}})
+			throw(ArgumentError("domain must be an NTuple of Tuples, but got $(typeof(domain))"))
+		end
+		if !isa(initial_conditions, AbstractVector{T})
+			throw(ArgumentError("initial_conditions must be a vector of $T, but got $(typeof(initial_conditions))"))
+		end
+		if !isa(tspan, Tuple{T, T})
+			throw(ArgumentError("tspan must be a Tuple of $T, but got $(typeof(tspan))"))
+		end
+
+		new{T, N}(f, K, boundary_conditions, domain, initial_conditions, tspan)
+	end
 end
 
 """
-    KSDirichletBC{T<:Real}
+	KSPDEProblem{T <: Number, N} <: AbstractKSProblem
 
-Represents a Dirichlet boundary condition.
+Represents a partial differential equation (PDE) problem in N-dimensional space.
 
 # Fields
-- `value::Function`: Function defining the boundary value
-- `boundary::Function`: Function defining the boundary region
+- `pde::Function`: The PDE function defining the differential equation.
+- `boundary_conditions::Function`: The function specifying the boundary conditions.
+- `domain::NTuple{N, Tuple{T, T}}`: The spatial domain over which the problem is defined.
+- `initial_conditions::Union{AbstractVector{T}, Function}`: The initial conditions for the problem.
+- `tspan::Tuple{T, T}`: The time span over which the problem is defined.
 """
-mutable struct KSDirichletBC{T<:Real} <: AbstractKSBoundaryCondition{T}
-    value::Function
-    boundary::Function
+struct KSPDEProblem{T <: Number, N} <: AbstractKSProblem
+	pde::Function
+	boundary_conditions::Function
+	domain::NTuple{N, Tuple{T, T}}
+	initial_conditions::Union{AbstractVector{T}, Function}
+	tspan::Tuple{T, T}
+
+	function KSPDEProblem(pde::Function, boundary_conditions::Function,
+						  domain::NTuple{N, Tuple{T, T}}, initial_conditions::Union{AbstractVector{T}, Function},
+						  tspan::Tuple{T, T}) where {T <: Number, N}
+		# Type checks
+		if !isa(pde, Function)
+			throw(ArgumentError("PDE must be a Function, but got $(typeof(pde))"))
+		end
+		if !isa(boundary_conditions, Function)
+			throw(ArgumentError("boundary_conditions must be a Function, but got $(typeof(boundary_conditions))"))
+		end
+		if !isa(domain, NTuple{N, Tuple{T, T}})
+			throw(ArgumentError("domain must be an NTuple of Tuples, but got $(typeof(domain))"))
+		end
+		if !(isa(initial_conditions, AbstractVector{T}) || isa(initial_conditions, Function))
+			throw(ArgumentError("initial_conditions must be an AbstractVector or Function, but got $(typeof(initial_conditions))"))
+		end
+		if !isa(tspan, Tuple{T, T})
+			throw(ArgumentError("tspan must be a Tuple of $T, but got $(typeof(tspan))"))
+		end
+
+		new{T, N}(pde, boundary_conditions, domain, initial_conditions, tspan)
+	end
 end
 
 """
-    KSNeumannBC{T<:Real}
+	KSDAEProblem{T <: Number, N} <: AbstractKSProblem
 
-Represents a Neumann boundary condition.
+Represents a differential algebraic equation (DAE) problem in N-dimensional space.
 
 # Fields
-- `flux::Function`: Function defining the boundary flux
-- `boundary::Function`: Function defining the boundary region
+- `dae::Function`: The DAE function defining the differential equation.
+- `boundary_conditions::Function`: The function specifying the boundary conditions.
+- `domain::NTuple{N, Tuple{T, T}}`: The spatial domain over which the problem is defined.
+- `initial_conditions::AbstractVector{T}`: The initial conditions for the problem.
+- `tspan::Tuple{T, T}`: The time span over which the problem is defined.
 """
-mutable struct KSNeumannBC{T<:Real} <: AbstractKSBoundaryCondition{T}
-    flux::Function
-    boundary::Function
+struct KSDAEProblem{T <: Number, N} <: AbstractKSProblem
+	dae::Function
+	boundary_conditions::Function
+	domain::NTuple{N, Tuple{T, T}}
+	initial_conditions::AbstractVector{T}
+	tspan::Tuple{T, T}
+
+	function KSDAEProblem(dae::Function, boundary_conditions::Function,
+						  domain::NTuple{N, Tuple{T, T}}, initial_conditions::AbstractVector{T},
+						  tspan::Tuple{T, T}) where {T <: Number, N}
+		# Type checks
+		if !isa(dae, Function)
+			throw(ArgumentError("DAE must be a Function, but got $(typeof(dae))"))
+		end
+		if !isa(boundary_conditions, Function)
+			throw(ArgumentError("boundary_conditions must be a Function, but got $(typeof(boundary_conditions))"))
+		end
+		if !isa(domain, NTuple{N, Tuple{T, T}})
+			throw(ArgumentError("domain must be an NTuple of Tuples, but got $(typeof(domain))"))
+		end
+		if !isa(initial_conditions, AbstractVector{T})
+			throw(ArgumentError("initial_conditions must be a vector of $T, but got $(typeof(initial_conditions))"))
+		end
+		if !isa(tspan, Tuple{T, T})
+			throw(ArgumentError("tspan must be a Tuple of $T, but got $(typeof(tspan))"))
+		end
+
+		new{T, N}(dae, boundary_conditions, domain, initial_conditions, tspan)
+	end
 end
 
 """
-    KSRobinBC{T<:Real}
+	KSMovingBoundaryPDEProblem{T <: Number, N} <: AbstractKSProblem
 
-Represents a Robin boundary condition.
+Represents a partial differential equation (PDE) problem with moving boundaries in N-dimensional space.
 
 # Fields
-- `a::Function`: Function defining the a coefficient
-- `b::Function`: Function defining the b coefficient
-- `c::Function`: Function defining the c coefficient
-- `boundary::Function`: Function defining the boundary region
+- `pde::Function`: The PDE function defining the differential equation.
+- `boundary_conditions::Function`: The function specifying the boundary conditions.
+- `domain::NTuple{N, Tuple{T, T}}`: The spatial domain over which the problem is defined.
+- `initial_conditions::AbstractVector{T}`: The initial conditions for the problem.
+- `tspan::Tuple{T, T}`: The time span over which the problem is defined.
+- `boundary_motion::Function`: The function defining the motion of the boundary.
 """
-mutable struct KSRobinBC{T<:Real} <: AbstractKSBoundaryCondition{T}
-    a::Function
-    b::Function
-    c::Function
-    boundary::Function
+struct KSMovingBoundaryPDEProblem{T <: Number, N} <: AbstractKSProblem
+	pde::Function
+	boundary_conditions::Function
+	domain::NTuple{N, Tuple{T, T}}
+	initial_conditions::AbstractVector{T}
+	tspan::Tuple{T, T}
+	boundary_motion::Function
+
+	function KSMovingBoundaryPDEProblem(pde::Function, boundary_conditions::Function,
+										domain::NTuple{N, Tuple{T, T}}, initial_conditions::AbstractVector{T},
+										tspan::Tuple{T, T}, boundary_motion::Function) where {T <: Number, N}
+		# Type checks
+		if !isa(pde, Function)
+			throw(ArgumentError("PDE must be a Function, but got $(typeof(pde))"))
+		end
+		if !isa(boundary_conditions, Function)
+			throw(ArgumentError("boundary_conditions must be a Function, but got $(typeof(boundary_conditions))"))
+		end
+		if !isa(domain, NTuple{N, Tuple{T, T}})
+			throw(ArgumentError("domain must be an NTuple of Tuples, but got $(typeof(domain))"))
+		end
+		if !isa(initial_conditions, AbstractVector{T})
+			throw(ArgumentError("initial_conditions must be a vector of $T, but got $(typeof(initial_conditions))"))
+		end
+		if !isa(tspan, Tuple{T, T})
+			throw(ArgumentError("tspan must be a Tuple of $T, but got $(typeof(tspan))"))
+		end
+		if !isa(boundary_motion, Function)
+			throw(ArgumentError("boundary_motion must be a Function, but got $(typeof(boundary_motion))"))
+		end
+
+		new{T, N}(pde, boundary_conditions, domain, initial_conditions, tspan, boundary_motion)
+	end
 end
 
 """
-    KSSolverOptions{T<:Real}
+	KSPIDEProblem{T <: Number, N} <: AbstractKSProblem
 
-Options for the Kitchen Sink solver.
+Represents a partial integro-differential equation (PIDE) problem in N-dimensional space.
 
 # Fields
-- `max_iterations::Int`: Maximum number of iterations
-- `tolerance::Real`: Convergence tolerance
-- `adaptive::Bool`: Whether to use adaptive refinement
-- `max_levels::Int`: Maximum number of levels in the hierarchy
-- `smoothness_threshold::T`: Threshold for smoothness in adaptive refinement
+- `pide::Function`: The PIDE function defining the differential part of the equation.
+- `kernel::Function`: The kernel function defining the integral part of the equation.
+- `boundary_conditions::Function`: The function specifying the boundary conditions.
+- `domain::NTuple{N, Tuple{T, T}}`: The spatial domain over which the problem is defined.
+- `initial_conditions::Union{AbstractVector{T}, Function}`: The initial conditions for the problem.
+- `tspan::Tuple{T, T}`: The time span over which the problem is defined.
 """
-mutable struct KSSolverOptions{T<:Real} <: AbstractKSSolver{T}
-    max_iterations::Int
-    tolerance::Real
-    adaptive::Bool
-    max_levels::Int
-    smoothness_threshold::T
-    initial_elements::Int
-    initial_degree::Int
+struct KSPIDEProblem{T <: Number, N} <: AbstractKSProblem
+	pide::Function
+	kernel::Function
+	boundary_conditions::Function
+	domain::NTuple{N, Tuple{T, T}}
+	initial_conditions::Union{AbstractVector{T}, Function}
+	tspan::Tuple{T, T}
+
+	function KSPIDEProblem(pide::Function, kernel::Function, boundary_conditions::Function,
+						   domain::NTuple{N, Tuple{T, T}}, initial_conditions::Union{AbstractVector{T}, Function},
+						   tspan::Tuple{T, T}) where {T <: Number, N}
+		# Type checks
+		if !isa(pide, Function)
+			throw(ArgumentError("PIDE must be a Function, but got $(typeof(pide))"))
+		end
+		if !isa(kernel, Function)
+			throw(ArgumentError("kernel must be a Function, but got $(typeof(kernel))"))
+		end
+		if !isa(boundary_conditions, Function)
+			throw(ArgumentError("boundary_conditions must be a Function, but got $(typeof(boundary_conditions))"))
+		end
+		if !isa(domain, NTuple{N, Tuple{T, T}})
+			throw(ArgumentError("domain must be an NTuple of Tuples, but got $(typeof(domain))"))
+		end
+		if !(isa(initial_conditions, AbstractVector{T}) || isa(initial_conditions, Function))
+			throw(ArgumentError("initial_conditions must be an AbstractVector or Function, but got $(typeof(initial_conditions))"))
+		end
+		if !isa(tspan, Tuple{T, T})
+			throw(ArgumentError("tspan must be a Tuple of $T, but got $(typeof(tspan))"))
+		end
+
+		new{T, N}(pide, kernel, boundary_conditions, domain, initial_conditions, tspan)
+	end
 end
 
 """
-    KSSolver{T<:Real}
+	KSDiscretizedProblem{T <: Number, N, M, MT <: AbstractMatrix} <: AbstractKSProblem
 
-The Kitchen Sink solver.
+Represents a discretized problem.
 
 # Fields
-- `options::KSSolverOptions{T}`: Solver options
-- `current_solution::Vector{T}`: Current solution vector
-- `error_estimates::Vector{T}`: Error estimates for each element
+- `time_nodes::AbstractVector{T}`: The time nodes of the discretization.
+- `spatial_nodes::NTuple{N, AbstractVector{T}}`: The spatial nodes of the discretization.
+- `system_matrix::MT`: The system matrix of the discretized problem.
+- `initial_conditions::AbstractVector{T}`: The initial conditions.
+- `problem_functions::NTuple{M, Function}`: The problem functions representing the discretized equations.
 """
-mutable struct KSSolver{T<:Real} <: AbstractKSSolver{T}
-    options::KSSolverOptions{T}
-    current_solution::Vector{T}
-    error_estimates::Vector{T}
+mutable struct KSDiscretizedProblem{T <: Number, N, M, MT <: AbstractMatrix} <: AbstractKSProblem
+	time_nodes::AbstractVector{T}
+	spatial_nodes::NTuple{N, AbstractVector{T}}
+	system_matrix::MT
+	initial_conditions::AbstractVector{T}
+	problem_functions::NTuple{M, Function}
+
+	function KSDiscretizedProblem(time_nodes::AbstractVector{T}, spatial_nodes::NTuple{N, AbstractVector{T}},
+								  system_matrix::MT, initial_conditions::AbstractVector{T},
+								  problem_functions::NTuple{M, Function}) where {T <: Number, N, M, MT <: AbstractMatrix}
+		# Type checks
+		if length(time_nodes) == 0
+			throw(ArgumentError("Time nodes cannot be empty"))
+		end
+		if length(spatial_nodes) != N
+			throw(ArgumentError("Number of spatial node sets must match N"))
+		end
+		if !all(isa.(problem_functions, Function))
+			throw(ArgumentError("All problem_functions must be callable"))
+		end
+
+		new{T, N, M, MT}(time_nodes, spatial_nodes, system_matrix, initial_conditions, problem_functions)
+	end
 end
 
 """
-    KSOptimalControlProblem{T<:Real}
+	KSOptimalControlProblem{T <: Number} <: AbstractKSOptimizationProblem
 
 Represents an optimal control problem.
 
 # Fields
-- `state_equation::Function`: The state equation function
-- `cost_function::Function`: The cost function
-- `terminal_cost::Function`: The terminal cost function
-- `initial_state::Vector{T}`: The initial state vector
-- `time_span::Tuple{T, T}`: The time span of the problem
-- `control_bounds::Vector{Tuple{T, T}}`: The bounds on the control variables
+- `state_equations::AbstractVector{<:Function}`: The state equations of the control problem.
+- `cost_functions::AbstractVector{<:Function}`: The cost functions to be minimized.
+- `terminal_cost::Function`: The terminal cost function.
+- `initial_state::AbstractVector{T}`: The initial state vector.
+- `time_span::Tuple{T, T}`: The time span of the control problem.
+- `control_bounds::AbstractVector{NTuple{2, T}}`: The bounds on the control variables.
 """
-mutable struct KSOptimalControlProblem{T<:Real} <: AbstractKSOptimizationProblem{T,1}
-    state_equation::Function
-    cost_function::Function
-    terminal_cost::Function
-    initial_state::Vector{T}
-    time_span::Tuple{T,T}
-    control_bounds::Vector{Tuple{T,T}}
+struct KSOptimalControlProblem{T <: Number} <: AbstractKSOptimizationProblem
+	state_equations::AbstractVector{<:Function}
+	cost_functions::AbstractVector{<:Function}
+	terminal_cost::Function
+	initial_state::AbstractVector{T}
+	time_span::Tuple{T, T}
+	control_bounds::AbstractVector{NTuple{2, T}}
+
+	function KSOptimalControlProblem(state_equations::AbstractVector{<:Function},
+									 cost_functions::AbstractVector{<:Function},
+									 terminal_cost::Function,
+									 initial_state::AbstractVector{T},
+									 time_span::Tuple{T, T},
+									 control_bounds::AbstractVector{NTuple{2, T}}) where {T <: Number}
+		# Type checks
+		if length(initial_state) != length(state_equations)
+			throw(ArgumentError("The number of initial states ($(length(initial_state))) must match the number of state equations ($(length(state_equations)))."))
+		end
+		if length(state_equations) != length(control_bounds)
+			throw(ArgumentError("The number of state equations ($(length(state_equations))) must match the number of control bounds ($(length(control_bounds)))."))
+		end
+		if length(state_equations) != length(cost_functions)
+			throw(ArgumentError("The number of state equations ($(length(state_equations))) must match the number of cost functions ($(length(cost_functions)))."))
+		end
+
+		new{T}(state_equations, cost_functions, terminal_cost, initial_state, time_span, control_bounds)
+	end
 end
+# Cartesian Coordinates
 
 """
-    KSGradientDescentOptimizer
+	KSCartesianCoordinates{T, N} <: AbstractKSCoordinateSystem
 
-Represents a gradient descent optimizer.
+Represents a Cartesian coordinate system.
 
 # Fields
-- `learning_rate::Float64`: Learning rate for the optimizer
-- `max_iterations::Int`: Maximum number of iterations
-- `tolerance::Float64`: Convergence tolerance
+- `ranges::NTuple{N, Tuple{T, T}}`: A tuple of tuples, where each inner tuple represents the range for a coordinate dimension.
+- `active::NTuple{N, Bool}`: A tuple indicating which dimensions are active.
+
+# Constructor
+- `KSCartesianCoordinates(ranges::NTuple{N, Tuple{T, T}}, active::NTuple{N, Bool}) where {T <: Number, N}`:
+  Creates a `KSCartesianCoordinates` object with the specified ranges and active status for each dimension.
 """
-struct KSGradientDescentOptimizer <: AbstractKSOptimizer{Float64}
-    learning_rate::Float64
-    max_iterations::Int
-    tolerance::Float64
+struct KSCartesianCoordinates{T <: Number, N} <: AbstractKSCoordinateSystem
+	ranges::NTuple{N, Tuple{T, T}}
+	active::NTuple{N, Bool}
+
+	function KSCartesianCoordinates{T, N}(ranges::NTuple{N, Tuple{T, T}}, active::NTuple{N, Bool}) where {T <: Number, N}
+		for (i, range) in enumerate(ranges)
+			validate_range(range, "dimension $i", -Inf, Inf)
+		end
+		return new{T, N}(ranges, active)
+	end
+end
+
+# Tuple constructor
+function KSCartesianCoordinates(ranges::Tuple{Vararg{Tuple{Number, Number}}}, active::NTuple{N, Bool}) where {N}
+	T = promote_type(map(x -> promote_type(eltype(x[1]), eltype(x[2])), ranges)...)
+	promoted_ranges = ntuple(i -> (convert(T, ranges[i][1]), convert(T, ranges[i][2])), Val(N))
+	return KSCartesianCoordinates{T, N}(promoted_ranges, active)
+end
+
+# Default constructor with all domains active
+function KSCartesianCoordinates(ranges::Tuple{Vararg{Tuple{Number, Number}}})
+	N = length(ranges)
+	T = promote_type(map(x -> promote_type(eltype(x[1]), eltype(x[2])), ranges)...)
+	promoted_ranges = ntuple(i -> (convert(T, ranges[i][1]), convert(T, ranges[i][2])), Val(N))
+	return KSCartesianCoordinates{T, N}(promoted_ranges, ntuple(i -> true, Val(N)))
+end
+# Adjust KSCartesianCoordinates Constructor for 1D case
+function KSCartesianCoordinates(ranges::Tuple{Number, Number})
+	return KSCartesianCoordinates(((ranges,)), (true,))
 end
 
 """
-    KSNewtonOptimizer
+	KSPolarCoordinates{T} <: AbstractKSCoordinateSystem
 
-Represents a Newton optimizer.
+Represents a polar coordinate system.
 
 # Fields
-- `max_iterations::Int`: Maximum number of iterations
-- `tolerance::Float64`: Convergence tolerance
+- `r::Union{Tuple{T, T}, Nothing}`: The radial coordinate range, or `nothing` if inactive.
+- `theta::Union{Tuple{T, T}, Nothing}`: The angular coordinate range, or `nothing` if inactive.
+- `active::NTuple{2, Bool}`: A tuple indicating which dimensions (r, theta) are active.
+
+# Constructor
+- `KSPolarCoordinates(r::Union{Tuple{Number, Number}, Nothing}, theta::Union{Tuple{Number, Number}, Nothing})`:
+  Creates a `KSPolarCoordinates` object with the specified ranges and active status for the radial and angular coordinates.
 """
-struct KSNewtonOptimizer <: AbstractKSOptimizer{Float64}
-    max_iterations::Int
-    tolerance::Float64
+# Polar Coordinates
+struct KSPolarCoordinates{T <: Number} <: AbstractKSCoordinateSystem
+	r::Union{Tuple{T, T}, Nothing}
+	theta::Union{Tuple{T, T}, Nothing}
+	active::NTuple{2, Bool}
+
+	function KSPolarCoordinates(r::Union{Tuple{Number, Number}, Nothing}, theta::Union{Tuple{Number, Number}, Nothing})
+		T = promote_type(r !== nothing ? typeof(r[1]) : Float64, theta !== nothing ? typeof(theta[1]) : Float64)
+
+		if r !== nothing
+			r = validate_range(r, "r", zero(T), Inf)
+		end
+		if theta !== nothing
+			theta = validate_range(theta, "theta", zero(T), mod2pi(2π))
+		end
+
+		active = (r !== nothing, theta !== nothing)
+
+		return new{T}(r !== nothing ? (convert(T, r[1]), convert(T, r[2])) : nothing,
+					  theta !== nothing ? (convert(T, theta[1]), convert(T, theta[2])) : nothing,
+					  active)
+	end
 end
 
 """
-    KSLBFGSOptimizer
+	KSCylindricalCoordinates{T} <: AbstractKSCoordinateSystem
 
-Represents an LBFGS optimizer.
+Represents a cylindrical coordinate system.
 
 # Fields
-- `m::Int`: Number of corrections to store
-- `max_iterations::Int`: Maximum number of iterations
-- `tolerance::Float64`: Convergence tolerance
+- `r::Union{Tuple{T, T}, Nothing}`: The radial coordinate range, or `nothing` if inactive.
+- `theta::Union{Tuple{T, T}, Nothing}`: The angular coordinate range, or `nothing` if inactive.
+- `z::Union{Tuple{T, T}, Nothing}`: The axial coordinate range, or `nothing` if inactive.
+- `active::NTuple{3, Bool}`: A tuple indicating which dimensions (r, theta, z) are active.
+
+# Constructor
+- `KSCylindricalCoordinates(r::Union{Tuple{Number, Number}, Nothing}, theta::Union{Tuple{Number, Number}, Nothing}, z::Union{Tuple{Number, Number}, Nothing})`:
+  Creates a `KSCylindricalCoordinates` object with the specified ranges and active status for the radial, angular, and axial coordinates.
 """
-struct KSLBFGSOptimizer <: AbstractKSOptimizer{Float64}
-    m::Int  # Number of corrections to store
-    max_iterations::Int
-    tolerance::Float64
+
+# Cylindrical Coordinates
+struct KSCylindricalCoordinates{T <: Number} <: AbstractKSCoordinateSystem
+	r::Union{Tuple{T, T}, Nothing}
+	theta::Union{Tuple{T, T}, Nothing}
+	z::Union{Tuple{T, T}, Nothing}
+	active::NTuple{3, Bool}
+
+	function KSCylindricalCoordinates(r::Union{Tuple{Number, Number}, Nothing}, theta::Union{Tuple{Number, Number}, Nothing}, z::Union{Tuple{Number, Number}, Nothing})
+		T = promote_type(r !== nothing ? typeof(r[1]) : Float64, theta !== nothing ? typeof(theta[1]) : Float64, z !== nothing ? typeof(z[1]) : Float64)
+
+		if r !== nothing
+			r = validate_range(r, "r", zero(T), Inf)
+		end
+		if theta !== nothing
+			theta = validate_range(theta, "theta", zero(T), mod2pi(2π))
+		end
+		if z !== nothing
+			z = validate_range(z, "z", -Inf, Inf)
+		end
+
+		active = (r !== nothing, theta !== nothing, z !== nothing)
+
+		return new{T}(r !== nothing ? (convert(T, r[1]), convert(T, r[2])) : nothing,
+					  theta !== nothing ? (convert(T, theta[1]), convert(T, theta[2])) : nothing,
+					  z !== nothing ? (convert(T, z[1]), convert(T, z[2])) : nothing,
+					  active)
+	end
 end
 
 """
-    KSBVDAEProblem{T<:Real}
+	KSSphericalCoordinates{T} <: AbstractKSCoordinateSystem
 
-Represents a Boundary Value Differential-Algebraic Equation problem.
+Represents a spherical coordinate system.
 
 # Fields
-- `f::Function`: Differential equations
-- `g::Function`: Algebraic equations
-- `bc::Function`: Boundary conditions
-- `tspan::Tuple{T, T}`: Time span
-- `y0::Vector{T}`: Initial values
-- `algebraic_vars::Vector{Bool}`: Flags indicating algebraic variables
+- `r::Union{Tuple{T, T}, Nothing}`: The radial coordinate range, or `nothing` if inactive.
+- `theta::Union{Tuple{T, T}, Nothing}`: The polar angle range, or `nothing` if inactive.
+- `phi::Union{Tuple{T, T}, Nothing}`: The azimuthal angle range, or `nothing` if inactive.
+- `active::NTuple{3, Bool}`: A tuple indicating which dimensions (r, theta, phi) are active.
+
+# Constructor
+- `KSSphericalCoordinates(r::Union{Tuple{Number, Number}, Nothing}, theta::Union{Tuple{Number, Number}, Nothing}, phi::Union{Tuple{Number, Number}, Nothing})`:
+  Creates a `KSSphericalCoordinates` object with the specified ranges and active status for the radial, polar, and azimuthal coordinates.
 """
-mutable struct KSBVDAEProblem{T<:Real} <: AbstractKSBVDAEProblem{T,1}
-    f::Function
-    g::Function
-    bc::Function
-    tspan::Tuple{T,T}
-    y0::Vector{T}
-    algebraic_vars::Vector{Bool}
-    initial_conditions::Vector{T}
+# Spherical Coordinates
+struct KSSphericalCoordinates{T <: Number} <: AbstractKSCoordinateSystem
+	r::Union{Tuple{T, T}, Nothing}
+	theta::Union{Tuple{T, T}, Nothing}
+	phi::Union{Tuple{T, T}, Nothing}
+	active::NTuple{3, Bool}
+
+	function KSSphericalCoordinates(r::Union{Tuple{Number, Number}, Nothing}, theta::Union{Tuple{Number, Number}, Nothing}, phi::Union{Tuple{Number, Number}, Nothing})
+		T = promote_type(r !== nothing ? typeof(r[1]) : Float64, theta !== nothing ? typeof(theta[1]) : Float64, phi !== nothing ? typeof(phi[1]) : Float64)
+
+		if r !== nothing
+			r = validate_range(r, "r", zero(T), Inf)
+		end
+		if theta !== nothing
+			theta = validate_range(theta, "theta", zero(T), π)
+		end
+		if phi !== nothing
+			phi = validate_range(phi, "phi", zero(T), mod2pi(2π))
+		end
+
+		active = (r !== nothing, theta !== nothing, phi !== nothing)
+
+		return new{T}(r !== nothing ? (convert(T, r[1]), convert(T, r[2])) : nothing,
+					  theta !== nothing ? (convert(T, theta[1]), convert(T, theta[2])) : nothing,
+					  phi !== nothing ? (convert(T, phi[1]), convert(T, phi[2])) : nothing,
+					  active)
+	end
 end
 
 """
-    KSCoupledProblem{T<:Real}
+	validate_range(range::Union{Tuple{T1, T2}, Nothing}, name::String, min_val::Number, max_val::Union{Number, Nothing} = nothing) where {T1 <: Number, T2 <: Number}
 
-Represents a coupled problem in the Kitchen Sink framework.
+Validates and potentially normalizes a coordinate range.
+
+# Arguments
+- `range::Union{Tuple{T1, T2}, Nothing}`: The range to be validated, or `nothing` if inactive.
+- `name::String`: The name of the coordinate (e.g., "r", "theta").
+- `min_val::Number`: The minimum allowed value for the range.
+- `max_val::Union{Number, Nothing}`: The maximum allowed value for the range, or `nothing` if no upper limit.
+
+# Returns
+- A validated and normalized range as a tuple of two values.
+
+# Throws
+- `ArgumentError` if the range is invalid (e.g., if the lower bound is greater than the upper bound, or if the range exceeds specified limits).
+"""
+# Validate Range Function
+function validate_range(range::Union{Tuple{T1, T2}, Nothing}, name::String, min_val::Number, max_val::Union{Number, Nothing} = nothing) where {T1 <: Number, T2 <: Number}
+	range === nothing && return
+
+	length(range) != 2 && throw(ArgumentError("Invalid $name range $range: must be a tuple of length 2."))
+
+	T = promote_type(T1, T2, typeof(min_val), typeof(max_val))
+	range = (convert(T, range[1]), convert(T, range[2]))
+
+	range[1] > range[2] && throw(ArgumentError("Invalid $name range $range: lower bound must be <= upper bound."))
+
+	range[1] < min_val && throw(ArgumentError("Invalid $name range $range: must be >= $min_val."))
+
+	if max_val !== nothing
+		if name in ["theta", "phi"]
+			range[2] > max_val && throw(ArgumentError("Invalid $name range $range: $name must be <= $max_val."))
+			# Normalize angles to the valid range [0, max_val]
+			range = (mod2pi(float(range[1])), mod2pi(float(range[2])))
+			if range[1] > range[2]
+				throw(ArgumentError("Invalid $name range $range: lower bound must be <= upper bound after normalization."))
+			end
+		else
+			range[2] > max_val && throw(ArgumentError("Invalid $name range $range: must be <= $max_val."))
+		end
+	end
+
+	return range
+end
+
+"""
+	KSDirichletBC <: AbstractKSBoundaryCondition
+
+Represents a Dirichlet boundary condition.
 
 # Fields
-- `problems::Vector{AbstractKSProblem{T, 1}}`: List of problems to be coupled
-- `coupling_terms::Matrix{Union{Function, Nothing}}`: Coupling terms between subproblems
+- `value::Function`: The function specifying the boundary value.
+- `boundary::Function`: The function specifying the boundary region.
 """
-mutable struct KSCoupledProblem{T<:Real} <: AbstractKSProblem{T,1}
-    problems::Vector{AbstractKSProblem{T,1}}
-    coupling_terms::Matrix{Union{Function,Nothing}}
+struct KSDirichletBC <: AbstractKSBoundaryCondition
+	value::Function
+	boundary::Function
+
+	function KSDirichletBC(value::Function, boundary::Function)
+		if !isa(value, Function)
+			throw(ArgumentError("value must be a Function, but got $(typeof(value))"))
+		end
+		if !isa(boundary, Function)
+			throw(ArgumentError("boundary must be a Function, but got $(typeof(boundary))"))
+		end
+		new(value, boundary)
+	end
 end
 
 """
-    KSIDEProblem{T<:Real}
+	KSRobinBC <: AbstractKSBoundaryCondition
 
-Represents an Integral-Differential Equation problem.
+Represents a Robin boundary condition.
 
 # Fields
-- `f::Function`: IDE function dy/dt = f(t, y, integral)
-- `K::Function`: Kernel function for the integral
-- `boundary_conditions::Function`: Boundary conditions function
-- `tspan::Tuple{T, T}`: Time span
-- `initial_conditions::Vector{T}`: Initial values
+- `alpha::Function`: The alpha coefficient function.
+- `beta::Function`: The beta coefficient function.
+- `value::Function`: The function specifying the boundary value.
+- `boundary::Function`: The function specifying the boundary region.
 """
-mutable struct KSIDEProblem{T<:Real} <: AbstractKSIDEProblem{T,1}
-    f::Function
-    K::Function
-    boundary_conditions::Function
-    tspan::Tuple{T,T}
-    initial_conditions::Vector{T}
+struct KSRobinBC <: AbstractKSBoundaryCondition
+	alpha::Function
+	beta::Function
+	value::Function
+	boundary::Function
+
+	function KSRobinBC(alpha::Function, beta::Function, value::Function, boundary::Function)
+		if !all(isa.([alpha, beta, value, boundary], Function))
+			throw(ArgumentError("All arguments must be callable"))
+		end
+		new(alpha, beta, value, boundary)
+	end
 end
 
 """
-    KSODEProblem{T<:Real}
+	KSNeumannBC <: AbstractKSBoundaryCondition
 
-Represents an ODE problem in the Kitchen Sink framework.
+Represents a Neumann boundary condition.
 
 # Fields
-- `ode::Function`: The ODE function
-- `tspan::Tuple{T, T}`: Time span
-- `initial_conditions::Vector{T}`: Initial conditions
+- `flux::Function`: The function specifying the flux at the boundary.
+- `boundary::Function`: The function specifying the boundary region.
 """
-mutable struct KSODEProblem{T<:Real} <: AbstractKSODEProblem{T,1}
-    ode::Function
-    tspan::Tuple{T,T}
-    initial_conditions::Vector{T}
+struct KSNeumannBC <: AbstractKSBoundaryCondition
+	flux::Function
+	boundary::Function
+
+	function KSNeumannBC(flux::Function, boundary::Function)
+		if !isa(flux, Function)
+			throw(ArgumentError("flux must be a Function, but got $(typeof(flux))"))
+		end
+		if !isa(boundary, Function)
+			throw(ArgumentError("boundary must be a Function, but got $(typeof(boundary))"))
+		end
+		new(flux, boundary)
+	end
 end
 
 """
-    KSPDEProblem{T<:Real}
+	KSSolverOptions{T<:Number}
 
-Represents a PDE problem in the Kitchen Sink framework.
+Represents solver options for the KitchenSink framework.
 
 # Fields
-- `pde::Function`: The PDE function
-- `boundary_conditions::Function`: The boundary conditions function
-- `domain::NTuple{2, Tuple{T, T}}`: The spatial domain
-- `tspan::Tuple{T, T}`: Time span
-- `initial_conditions::Union{Vector{T}, Function}`: Initial conditions
+- `max_iterations::Int`: Maximum number of iterations.
+- `tolerance::T`: Tolerance for convergence.
+- `adaptive::Bool`: Whether to use adaptive methods.
+- `max_levels::Int`: Maximum number of levels in multigrid methods.
+- `smoothness_threshold::T`: Threshold for smoothness in adaptive methods.
+- `initial_elements::Int`: Initial number of elements.
+- `initial_degree::Int`: Initial polynomial degree.
+- `use_domain_decomposition::Bool`: Whether to use domain decomposition methods.
+- `num_subdomains::Int`: Number of subdomains for domain decomposition.
+- `use_strang_splitting::Bool`: Whether to use Strang splitting for time integration.
+- `dt::T`: Time step for the solver.
+- `num_steps::Int`: Number of time steps to perform.
+- `legendre_threshold::T`: Threshold for Legendre polynomial decay rate to trigger refinement.
 """
-mutable struct KSPDEProblem{T<:Real} <: AbstractKSPDEProblem{T,2}
-    pde::Function
-    boundary_conditions::Function
-    tspan::Tuple{T,T}
-    domain::NTuple{2,Tuple{T,T}}
-    initial_conditions::Union{Vector{T},Function}
+struct KSSolverOptions{T <: Number}
+	max_iterations::Int
+	tolerance::T
+	adaptive::Bool
+	max_levels::Int
+	smoothness_threshold::T
+	initial_elements::Int
+	initial_degree::Int
+	use_domain_decomposition::Bool
+	num_subdomains::Int
+	use_strang_splitting::Bool
+	dt::T
+	num_steps::Int
+	legendre_threshold::T
+
+	function KSSolverOptions(max_iterations::Int, tolerance::T, adaptive::Bool, max_levels::Int,
+							 smoothness_threshold::T, initial_elements::Int, initial_degree::Int,
+							 use_domain_decomposition::Bool, num_subdomains::Int,
+							 use_strang_splitting::Bool, dt::T, num_steps::Int,
+							 legendre_threshold::T) where {T <: Number}
+		if max_iterations <= 0
+			throw(ArgumentError("Maximum iterations must be positive"))
+		end
+		if tolerance <= 0
+			throw(ArgumentError("Tolerance must be positive"))
+		end
+		if max_levels <= 0
+			throw(ArgumentError("Maximum levels must be positive"))
+		end
+		if smoothness_threshold <= 0
+			throw(ArgumentError("Smoothness threshold must be positive"))
+		end
+		if initial_elements <= 0
+			throw(ArgumentError("Initial elements must be positive"))
+		end
+		if initial_degree <= 0
+			throw(ArgumentError("Initial degree must be positive"))
+		end
+		if legendre_threshold <= 0
+			throw(ArgumentError("Legendre threshold must be positive"))
+		end
+		new{T}(max_iterations, tolerance, adaptive, max_levels, smoothness_threshold,
+			   initial_elements, initial_degree, use_domain_decomposition, num_subdomains,
+			   use_strang_splitting, dt, num_steps, legendre_threshold)
+	end
 end
 
 """
-    KSDAEProblem{T<:Real}
+	KSDirectSolver <: AbstractKSLinearSolver
 
-Represents a DAE problem in the Kitchen Sink framework.
+Represents a direct linear solver.
 
 # Fields
-- `dae::Function`: The DAE function
-- `tspan::Tuple{T, T}`: Time span
-- `initial_conditions::Vector{T}`: Initial conditions
+- `method::Symbol`: The method used for the direct solver.
 """
-mutable struct KSDAEProblem{T<:Real} <: AbstractKSDAEProblem{T,1}
-    dae::Function
-    tspan::Tuple{T,T}
-    initial_conditions::Vector{T}
+struct KSDirectSolver <: AbstractKSLinearSolver
+	method::Symbol
+
+	function KSDirectSolver(method::Symbol)
+		new(method)
+	end
 end
 
 """
-    KSMovingBoundaryPDEProblem{T<:Real}
+	KSIterativeSolver{T<:Number} <: AbstractKSLinearSolver
 
-Represents a moving boundary PDE problem in the Kitchen Sink framework.
+Represents an iterative linear solver.
 
 # Fields
-- `pde::Function`: The PDE function
-- `boundary_conditions::Function`: The boundary conditions function
-- `domain::NTuple{2, Tuple{T, T}}`: The spatial domain
-- `boundary_motion::Function`: The boundary motion function
-- `tspan::Tuple{T, T}`: Time span
-- `initial_conditions::Vector{T}`: Initial conditions
+- `method::Symbol`: The method used for the iterative solver.
+- `max_iter::Int`: The maximum number of iterations.
+- `tolerance::T`: The tolerance for convergence.
+- `preconditioner::Union{Nothing, Function}`: The preconditioner function, if any.
 """
-mutable struct KSMovingBoundaryPDEProblem{T<:Real} <: AbstractKSPDEProblem{T,2}
-    pde::Function
-    boundary_conditions::Function
-    tspan::Tuple{T,T}
-    domain::NTuple{2,Tuple{T,T}}
-    boundary_motion::Function
-    initial_conditions::Vector{T}
+struct KSIterativeSolver{T <: Number} <: AbstractKSLinearSolver
+	method::Symbol
+	max_iter::Int
+	tolerance::T
+	preconditioner::Union{Nothing, Function}
+
+	function KSIterativeSolver(method::Symbol, max_iter::Int, tolerance::T, preconditioner::Union{Nothing, Function} = nothing) where {T <: Number}
+		if max_iter <= 0
+			throw(ArgumentError("Maximum iterations must be positive"))
+		end
+		if tolerance <= 0
+			throw(ArgumentError("Tolerance must be positive"))
+		end
+		if !isnothing(preconditioner) && !isa(preconditioner, Function)
+			throw(ArgumentError("Preconditioner must be a Function or Nothing, but got $(typeof(preconditioner))"))
+		end
+		new{T}(method, max_iter, tolerance, preconditioner)
+	end
 end
 
 """
-    KSPIDEProblem{T<:Real}
+	KSAMGSolver{T<:Number} <: AbstractKSLinearSolver
 
-Represents a PIDE problem in the Kitchen Sink framework.
+Represents an algebraic multigrid solver.
 
 # Fields
-- `pide::Function`: The PIDE function
-- `K::Function`: The kernel function
-- `boundary_conditions::Function`: The boundary conditions function
-- `domain::NTuple{2, Tuple{T, T}}`: The spatial domain
-- `tspan::Tuple{T, T}`: Time span
-- `initial_conditions::Union{Vector{T}, Function}`: Initial conditions
+- `max_iter::Int`: The maximum number of iterations.
+- `tolerance::T`: The tolerance for convergence.
+- `smoother::Symbol`: The smoother method used in the AMG solver.
 """
-mutable struct KSPIDEProblem{T<:Real} <: AbstractKSPDEProblem{T,2}
-    pide::Function
-    K::Function
-    boundary_conditions::Function
-    tspan::Tuple{T,T}
-    domain::NTuple{2,Tuple{T,T}}
-    initial_conditions::Union{Vector{T},Function}
+struct KSAMGSolver{T <: Number} <: AbstractKSLinearSolver
+	max_iter::Int
+	tolerance::T
+	smoother::Symbol
+
+	function KSAMGSolver(max_iter::Int, tolerance::T, smoother::Symbol) where {T <: Number}
+		if max_iter <= 0
+			throw(ArgumentError("Maximum iterations must be positive"))
+		end
+		if tolerance <= 0
+			throw(ArgumentError("Tolerance must be positive"))
+		end
+		new{T}(max_iter, tolerance, smoother)
+	end
 end
 
-"""
-    KSDiscretizedProblem{T<:Real}
-
-Represents a discretized problem in the Kitchen Sink framework.
-
-# Fields
-- `time_nodes::Vector{T}`: Time nodes
-- `spatial_nodes::Vector{Vector{T}}`: Spatial nodes
-- `system_matrix::Matrix{T}`: System matrix
-- `initial_conditions::Vector{T}`: Initial conditions
-- `problem_functions::Vector{Function}`: Problem functions
-"""
-mutable struct KSDiscretizedProblem{T<:Real}
-    time_nodes::Vector{T}
-    spatial_nodes::Vector{Vector{T}}
-    system_matrix::Matrix{T}
-    initial_conditions::Vector{T}
-    problem_functions::Vector{Function}
+# Helper function to filter active dimensions
+function tuple_if_active(dims...)
+	return Tuple(filter(!isnothing, dims))
 end
 
-"""
-    KSTimeSteppingSolver{T<:Real}
+# Check if a function is callable
+is_callable(f) = Base.isa(f, Function) || Base.isa(typeof(f), Function)
 
-Represents a time-stepping solver configuration.
-
-# Fields
-- `method::Symbol`: The time-stepping method to use (:euler, :rk4, etc.)
-- `dt::T`: Time step size
-- `t_final::T`: Final time
-- `tolerance::T`: Convergence tolerance
-"""
-mutable struct KSTimeSteppingSolver{T<:Real} <: AbstractKSSolver{T}
-    method::Symbol
-    dt::T
-    t_final::T
-    tolerance::T
-end
-
-"""
-    KSDirectSolver{T<:Real}
-
-Represents a direct solver configuration.
-
-# Fields
-- `method::Symbol`: The direct method to use (:lu, :qr, etc.)
-- `tolerance::T`: Convergence tolerance
-"""
-mutable struct KSDirectSolver{T<:Real} <: AbstractKSLinearSolver{T}
-    method::Symbol
-    tolerance::T
-end
-
-"""
-    KSIterativeSolver{T<:Real}
-
-Represents an iterative solver configuration.
-
-# Fields
-- `method::Symbol`: The iterative method to use (:cg, :gmres, :bicgstab, etc.)
-- `max_iter::Int`: Maximum number of iterations
-- `tolerance::T`: Convergence tolerance
-- `preconditioner::Union{Nothing, AbstractMatrix{T}}`: Preconditioner function, if any
-"""
-mutable struct KSIterativeSolver{T<:Real} <: AbstractKSLinearSolver{T}
-    method::Symbol
-    max_iter::Int
-    tolerance::T
-    preconditioner::Union{Nothing,AbstractMatrix{T}}
-end
-
-"""
-    KSAMGSolver{T<:Real}
-
-Represents an AMG solver configuration.
-
-# Fields
-- `max_iter::Int`: Maximum number of iterations
-- `tolerance::T`: Convergence tolerance
-- `smoother::Symbol`: The smoother to use (:jacobi, :gauss_seidel)
-"""
-mutable struct KSAMGSolver{T<:Real} <: AbstractKSLinearSolver{T}
-    max_iter::Int
-    tolerance::T
-    smoother::Symbol
-end
-
-"""
-    KSMultiProblem{T<:Real}
-
-Represents a multi-problem in the Kitchen Sink framework.
-
-# Fields
-- `subproblems::Vector{AbstractKSProblem{T, 1}}`: Subproblems in the multi-problem
-- `coupling_terms::Matrix{Union{Function, Nothing}}`: Coupling terms between subproblems
-"""
-mutable struct KSMultiProblem{T<:Real} <: AbstractKSProblem{T,1}
-    subproblems::Vector{AbstractKSProblem{T,1}}
-    coupling_terms::Matrix{Union{Function,Nothing}}
-end
-
-end # module KSTypes
+end  # module KSTypes
