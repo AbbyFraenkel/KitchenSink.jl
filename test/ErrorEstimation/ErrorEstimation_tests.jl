@@ -3,7 +3,7 @@ using Test
 using LinearAlgebra
 # using ..KSTypes, ..CoordinateSystems, ..SpectralMethods, ..ErrorEstimation, ..CommonMethods
 # using ..ErrorEstimation
-
+using KitchenSink.KSTypes, KitchenSink.CoordinateSystems, KitchenSink.SpectralMethods, KitchenSink.CommonMethods
 using KitchenSink.ErrorEstimation
 
 @testset "ErrorEstimation Tests 2.0" begin

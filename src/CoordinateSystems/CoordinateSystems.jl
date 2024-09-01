@@ -5,6 +5,7 @@ using LinearAlgebra
 
 export to_cartesian, from_cartesian, compute_jacobian, map_to_reference_element, map_from_reference_element
 export case_mapping
+
 # Helper function to scale a value based on a given range
 function scale_value(value::T, range::Union{Tuple{T, T}, Nothing}) where T
     if range === nothing
@@ -51,42 +52,42 @@ function map_coordinate_back(value::T, range::Union{Tuple{T, T}, Nothing}, is_an
     end
 end
 
-# Updated to_cartesian functions
+
+# Function to convert to Cartesian coordinates
+function to_cartesian(point::Tuple, coords::KSCartesianCoordinates)
+    if length(point) != length(coords.ranges)
+        throw(ArgumentError("Input coordinates must have $(length(coords.ranges)) elements."))
+    end
+    result = ntuple(i -> coords.active[i] ? point[i] : NaN, length(point))
+    return result
+end
+
+# Function to convert from Cartesian coordinates
+function from_cartesian(point::Tuple, coords::KSCartesianCoordinates)
+    if length(point) != length(coords.ranges)
+        throw(ArgumentError("Input coordinates must have $(length(coords.ranges)) elements."))
+    end
+    result = ntuple(i -> coords.active[i] ? point[i] : NaN, length(point))
+    return result
+end
+
+# Polar to Cartesian
 function to_cartesian(coords::Tuple, system::KSPolarCoordinates{T}) where T
     if length(coords) != 2
         throw(ArgumentError("Input coordinates must have 2 elements for polar coordinates."))
     end
     r, theta = coords
-    # Remove scaling for r and theta
+    if !system.active[1]
+        r = NaN
+    end
+    if !system.active[2]
+        theta = NaN
+    end
     x = r * cos(theta)
     y = r * sin(theta)
     return (x, y)
 end
 
-function to_cartesian(coords::Tuple, system::KSSphericalCoordinates{T}) where T
-    if length(coords) != 3
-        throw(ArgumentError("Input coordinates must have 3 elements for spherical coordinates."))
-    end
-    r, theta, phi = coords
-    # Remove scaling for r, theta, and phi
-    x = r * sin(theta) * cos(phi)
-    y = r * sin(theta) * sin(phi)
-    z = r * cos(theta)
-    return (x, y, z)
-end
-
-function to_cartesian(coords::Tuple, system::KSCylindricalCoordinates{T}) where T
-    if length(coords) != 3
-        throw(ArgumentError("Input coordinates must have 3 elements for cylindrical coordinates."))
-    end
-    r, theta, z = coords
-    # Remove scaling for r, theta, and z
-    x = r * cos(theta)
-    y = r * sin(theta)
-    return (x, y, z)
-end
-
-# Updated from_cartesian functions
 function from_cartesian(cartesian_coords::Tuple, system::KSPolarCoordinates{T}) where T
     if length(cartesian_coords) != 2
         throw(ArgumentError("Input coordinates must have 2 elements for polar coordinates."))
@@ -94,8 +95,34 @@ function from_cartesian(cartesian_coords::Tuple, system::KSPolarCoordinates{T}) 
     x, y = cartesian_coords
     r = hypot(x, y)
     theta = atan(y, x)
-    # Remove unscaling for r and theta
+    if !system.active[1]
+        r = NaN
+    end
+    if !system.active[2]
+        theta = NaN
+    end
     return (r, theta)
+end
+
+# Spherical to Cartesian
+function to_cartesian(coords::Tuple, system::KSSphericalCoordinates{T}) where T
+    if length(coords) != 3
+        throw(ArgumentError("Input coordinates must have 3 elements for spherical coordinates."))
+    end
+    r, theta, phi = coords
+    if !system.active[1]
+        r = NaN
+    end
+    if !system.active[2]
+        theta = NaN
+    end
+    if !system.active[3]
+        phi = NaN
+    end
+    x = r * sin(theta) * cos(phi)
+    y = r * sin(theta) * sin(phi)
+    z = r * cos(theta)
+    return (x, y, z)
 end
 
 function from_cartesian(cartesian_coords::Tuple, system::KSSphericalCoordinates{T}) where T
@@ -106,8 +133,36 @@ function from_cartesian(cartesian_coords::Tuple, system::KSSphericalCoordinates{
     r = sqrt(x^2 + y^2 + z^2)
     theta = acos(z / r)
     phi = atan(y, x)
-    # Remove unscaling for r, theta, and phi
+    if !system.active[1]
+        r = NaN
+    end
+    if !system.active[2]
+        theta = NaN
+    end
+    if !system.active[3]
+        phi = NaN
+    end
     return (r, theta, phi)
+end
+
+# Cylindrical to Cartesian
+function to_cartesian(coords::Tuple, system::KSCylindricalCoordinates{T}) where T
+    if length(coords) != 3
+        throw(ArgumentError("Input coordinates must have 3 elements for cylindrical coordinates."))
+    end
+    r, theta, z = coords
+    if !system.active[1]
+        r = NaN
+    end
+    if !system.active[2]
+        theta = NaN
+    end
+    if !system.active[3]
+        z = NaN
+    end
+    x = r * cos(theta)
+    y = r * sin(theta)
+    return (x, y, z)
 end
 
 function from_cartesian(cartesian_coords::Tuple, system::KSCylindricalCoordinates{T}) where T
@@ -117,22 +172,62 @@ function from_cartesian(cartesian_coords::Tuple, system::KSCylindricalCoordinate
     x, y, z = cartesian_coords
     r = hypot(x, y)
     theta = atan(y, x)
-    # Remove unscaling for r, theta, and z
+    if !system.active[1]
+        r = NaN
+    end
+    if !system.active[2]
+        theta = NaN
+    end
+    if !system.active[3]
+        z = NaN
+    end
     return (r, theta, z)
 end
 
-function from_cartesian(coords::Tuple{Vararg{T, N}}, system::KSCartesianCoordinates{T, N}) where {T, N}
-    return coords
-end
-
-function to_cartesian(coords::Tuple{Vararg{T, N}}, system::KSCartesianCoordinates{T, N}) where {T, N}
-    return coords
-end
-
 # Jacobian and Mapping Functions
+
 function compute_jacobian(coords::Tuple, system::KSCartesianCoordinates{T, N}) where {T, N}
     return I(N)
 end
+
+function compute_jacobian(coords::Tuple, system::KSPolarCoordinates{T}) where T
+    if length(coords) != 2
+        throw(ArgumentError("Input coordinates must have 2 elements for polar coordinates."))
+    end
+    r, theta = coords
+    if !system.active[1] || !system.active[2]
+        return zeros(T, 2, 2)
+    end
+    return [cos(theta) -r*sin(theta); sin(theta) r*cos(theta)]
+end
+
+function compute_jacobian(coords::Tuple, system::KSSphericalCoordinates{T}) where T
+    if length(coords) != 3
+        throw(ArgumentError("Input coordinates must have 3 elements for spherical coordinates."))
+    end
+    r, theta, phi = coords
+    if !system.active[1] || !system.active[2] || !system.active[3]
+        return zeros(T, 3, 3)
+    end
+    return [sin(theta)*cos(phi) r*cos(theta)*cos(phi) -r*sin(theta)*sin(phi);
+            sin(theta)*sin(phi) r*cos(theta)*sin(phi) r*sin(theta)*cos(phi);
+            cos(theta) -r*sin(theta) 0]
+end
+
+function compute_jacobian(coords::Tuple, system::KSCylindricalCoordinates{T}) where T
+    if length(coords) != 3
+        throw(ArgumentError("Input coordinates must have 3 elements for cylindrical coordinates."))
+    end
+    r, theta, z = coords
+    if !system.active[1] || !system.active[2] || !system.active[3]
+        return zeros(T, 3, 3)
+    end
+    return [cos(theta) -r*sin(theta) 0;
+            sin(theta) r*cos(theta) 0;
+            0 0 1]
+end
+
+# Map to/from reference element with inactive domain handling
 
 function map_to_reference_element(coords::Tuple, system::KSCartesianCoordinates{T, N}) where {T, N}
     if length(coords) != N
@@ -148,21 +243,21 @@ function map_from_reference_element(coords::Tuple, system::KSCartesianCoordinate
     return ntuple(i -> 0.5 * (coords[i] + 1) * (system.ranges[i][2] - system.ranges[i][1]) + system.ranges[i][1], N)
 end
 
-function compute_jacobian(coords::Tuple, system::KSPolarCoordinates{T}) where T
-    if length(coords) != 2
-        throw(ArgumentError("Input coordinates must have 2 elements for polar coordinates."))
-    end
-    r, theta = coords
-    return [cos(theta) -r*sin(theta); sin(theta) r*cos(theta)]
-end
-
 function map_to_reference_element(coords::Tuple, system::KSPolarCoordinates{T}) where T
     if length(coords) != 2
         throw(ArgumentError("Input coordinates must have 2 elements for polar coordinates."))
     end
     r, theta = coords
-    r_ref = map_coordinate(r, system.r)
-    theta_ref = map_coordinate(Float64(theta), system.theta, true)
+    if !system.active[1]
+        r_ref = NaN
+    else
+        r_ref = map_coordinate(r, system.r)
+    end
+    if !system.active[2]
+        theta_ref = NaN
+    else
+        theta_ref = map_coordinate(Float64(theta), system.theta, true)
+    end
     return (r_ref, theta_ref)
 end
 
@@ -171,19 +266,17 @@ function map_from_reference_element(coords::Tuple, system::KSPolarCoordinates{T}
         throw(ArgumentError("Input coordinates must have 2 elements for polar coordinates."))
     end
     r_ref, theta_ref = coords
-    r = map_coordinate_back(r_ref, system.r)
-    theta = map_coordinate_back(theta_ref, system.theta, true)
-    return (r, theta)
-end
-
-function compute_jacobian(coords::Tuple, system::KSSphericalCoordinates{T}) where T
-    if length(coords) != 3
-        throw(ArgumentError("Input coordinates must have 3 elements for spherical coordinates."))
+    if !system.active[1]
+        r = NaN
+    else
+        r = map_coordinate_back(r_ref, system.r)
     end
-    r, theta, phi = coords
-    return [sin(theta)*cos(phi) r*cos(theta)*cos(phi) -r*sin(theta)*sin(phi);
-            sin(theta)*sin(phi) r*cos(theta)*sin(phi) r*sin(theta)*cos(phi);
-            cos(theta) -r*sin(theta) 0]
+    if !system.active[2]
+        theta = NaN
+    else
+        theta = map_coordinate_back(theta_ref, system.theta, true)
+    end
+    return (r, theta)
 end
 
 function map_to_reference_element(coords::Tuple, system::KSSphericalCoordinates{T}) where T
@@ -191,9 +284,21 @@ function map_to_reference_element(coords::Tuple, system::KSSphericalCoordinates{
         throw(ArgumentError("Input coordinates must have 3 elements for spherical coordinates."))
     end
     r, theta, phi = coords
-    r_ref = map_coordinate(r, system.r)
-    theta_ref = map_coordinate(Float64(theta), system.theta, true)
-    phi_ref = map_coordinate(Float64(phi), system.phi, true)
+    if !system.active[1]
+        r_ref = NaN
+    else
+        r_ref = map_coordinate(r, system.r)
+    end
+    if !system.active[2]
+        theta_ref = NaN
+    else
+        theta_ref = map_coordinate(Float64(theta), system.theta, true)
+    end
+    if !system.active[3]
+        phi_ref = NaN
+    else
+        phi_ref = map_coordinate(Float64(phi), system.phi, true)
+    end
     return (r_ref, theta_ref, phi_ref)
 end
 
@@ -202,20 +307,22 @@ function map_from_reference_element(coords::Tuple, system::KSSphericalCoordinate
         throw(ArgumentError("Input coordinates must have 3 elements for spherical coordinates."))
     end
     r_ref, theta_ref, phi_ref = coords
-    r = map_coordinate_back(r_ref, system.r)
-    theta = map_coordinate_back(theta_ref, system.theta, true)
-    phi = map_coordinate_back(phi_ref, system.phi, true)
-    return (r, theta, phi)
-end
-
-function compute_jacobian(coords::Tuple, system::KSCylindricalCoordinates{T}) where T
-    if length(coords) != 3
-        throw(ArgumentError("Input coordinates must have 3 elements for cylindrical coordinates."))
+    if !system.active[1]
+        r = NaN
+    else
+        r = map_coordinate_back(r_ref, system.r)
     end
-    r, theta, z = coords
-    return [cos(theta) -r*sin(theta) 0;
-            sin(theta) r*cos(theta) 0;
-            0 0 1]
+    if !system.active[2]
+        theta = NaN
+    else
+        theta = map_coordinate_back(theta_ref, system.theta, true)
+    end
+    if !system.active[3]
+        phi = NaN
+    else
+        phi = map_coordinate_back(phi_ref, system.phi, true)
+    end
+    return (r, theta, phi)
 end
 
 function map_to_reference_element(coords::Tuple, system::KSCylindricalCoordinates{T}) where T
@@ -223,9 +330,21 @@ function map_to_reference_element(coords::Tuple, system::KSCylindricalCoordinate
         throw(ArgumentError("Input coordinates must have 3 elements for cylindrical coordinates."))
     end
     r, theta, z = coords
-    r_ref = map_coordinate(r, system.r)
-    theta_ref = map_coordinate(Float64(theta), system.theta, true)
-    z_ref = map_coordinate(z, system.z)
+    if !system.active[1]
+        r_ref = NaN
+    else
+        r_ref = map_coordinate(r, system.r)
+    end
+    if !system.active[2]
+        theta_ref = NaN
+    else
+        theta_ref = map_coordinate(Float64(theta), system.theta, true)
+    end
+    if !system.active[3]
+        z_ref = NaN
+    else
+        z_ref = map_coordinate(z, system.z)
+    end
     return (r_ref, theta_ref, z_ref)
 end
 
@@ -234,12 +353,25 @@ function map_from_reference_element(coords::Tuple, system::KSCylindricalCoordina
         throw(ArgumentError("Input coordinates must have 3 elements for cylindrical coordinates."))
     end
     r_ref, theta_ref, z_ref = coords
-    r = map_coordinate_back(r_ref, system.r)
-    theta = map_coordinate_back(theta_ref, system.theta, true)
-    z = map_coordinate_back(z_ref, system.z)
+    if !system.active[1]
+        r = NaN
+    else
+        r = map_coordinate_back(r_ref, system.r)
+    end
+    if !system.active[2]
+        theta = NaN
+    else
+        theta = map_coordinate_back(theta_ref, system.theta, true)
+    end
+    if !system.active[3]
+        z = NaN
+    else
+        z = map_coordinate_back(z_ref, system.z)
+    end
     return (r, theta, z)
 end
 
+# Handle case mapping based on coordinate system
 function case_mapping(bounds::Tuple{T, T}, coord_system::Symbol) where {T}
     if coord_system == :cartesian
         return map_from_reference_element(bounds, KSCartesianCoordinates((bounds,)))
@@ -253,4 +385,5 @@ function case_mapping(bounds::Tuple{T, T}, coord_system::Symbol) where {T}
         throw(ArgumentError("Unknown coordinate system: $coord_system"))
     end
 end
+
 end  # module CoordinateSystems

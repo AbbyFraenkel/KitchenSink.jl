@@ -22,7 +22,7 @@ end
 # @safetestset "Error Estimation" begin
 # 	include("ErrorEstimation/ErrorEstimation_tests.jl")
 # end
-# # # end
+# # end
 
 # @safetestset "Preprocessing" begin
 # 	include("Preprocessing/Preprocessing_test.jl")
@@ -48,9 +48,9 @@ end
 # 	include("LinearSolvers/LinearSolvers_tests.jl")
 # end
 
-# @safetestset "Problem Types" begin
-# 	include("ProblemTypes/ProblemTypes_tests.jl")
-# end
+@safetestset "Problem Types" begin
+	include("ProblemTypes/ProblemTypes_tests.jl")
+end
 # # Todo
 # @safetestset "Time Stepping" begin
 # 	include("TimeStepping/TimeStepping_tests.jl")

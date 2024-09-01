@@ -673,7 +673,6 @@ end
 			@test isapprox(scaled_Q[1, 1], 1.0)
 		end
 	end
-
 	@testset "OCFE Mesh Tests" begin
 		num_elements_2d = [5, 10]
 		num_elements_3d = [5, 10, 5]
@@ -682,11 +681,11 @@ end
 		derivative_order = 1
 		continuity_order = 1
 		cartesian_2d = KSCartesianCoordinates(((0.0, 1.0), (0.0, 1.0)))
-        cartesian_3d = KSCartesianCoordinates(((0.0, 1.0), (-1, 1), (0, 2.0)))
+		cartesian_3d = KSCartesianCoordinates(((0.0, 1.0), (-1.0, 1.0), (0.0, 2.0)))
 
 		cylindrical_3d = KSCylindricalCoordinates((0.0, 1.0), (0.0, 1.0), (0.0, 1.0))
-		polar_2D = KSPolarCoordinates((0, 1), (0, 2 * pi))
-		spherical_3D = KSSphericalCoordinates((0, 1), (0, pi), (0, 2 * pi))
+		polar_2D = KSPolarCoordinates((0.0, 1.0), (0.0, 2.0 * 3.141592653589793))
+		spherical_3D = KSSphericalCoordinates((0.0, 1.0), (0.0, 3.141592653589793), (0.0, 2.0 * 3.141592653589793))
 
 		# Test valid cases with different coordinate systems
 		@testset "Valid Cases with Coordinate Systems" begin
@@ -712,18 +711,16 @@ end
 		# Test invalid cases with incorrect domain and elements
 		@testset "Invalid Cases" begin
 			# Test case 1: Domain dimensionality mismatch
-			@test_throws MethodError create_ocfe_mesh([(0.0, 1.0)], num_elements_2d, poly_degree_3d, continuity_order, derivative_order, 3)
+			@test_throws BoundsError create_ocfe_mesh(polar_2D, [2], poly_degree_2d, continuity_order, 2)
 
-			# Test case 2: Mismatched number of elements
-			@test_throws MethodError create_ocfe_mesh(polar_2D, [2], poly_degree_2d, continuity_order, derivative_order, 2)
+			# Test case 2: Non-positive number of elements
+			@test_throws ArgumentError create_ocfe_mesh(cartesian_2d, [0, 2], poly_degree_2d, continuity_order, 2)
 
-			# Test case 3: Non-positive number of elements
-			@test_throws MethodError create_ocfe_mesh(cartesian_2d, [0, 2], poly_degree_2d, continuity_order, derivative_order, 2)
-			# Test case 4: Invalid polynomial degree
-			@test_throws MethodError create_ocfe_mesh(cartesian_2d, num_elements_2d, 0, continuity_order, derivative_order, 2)
+			# Test case 3: Invalid polynomial degree
+			@test_throws ArgumentError create_ocfe_mesh(cartesian_2d, num_elements_2d, 0, continuity_order, 2)
 
-			# Test case 5: Unknown coordinate system
-			@test_throws MethodError create_ocfe_mesh(cartesian_2d, num_elements_2d, poly_degree_2d, continuity_order, derivative_order, 2)
+			# Test case 4: Mismatched number of elements (or any other valid error condition)
+			@test_throws BoundsError create_ocfe_mesh(cartesian_2d, [2], poly_degree_2d, continuity_order, 2)
 		end
 	end
 end

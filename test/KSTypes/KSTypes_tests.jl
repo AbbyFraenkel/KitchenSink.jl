@@ -376,53 +376,74 @@ using KitchenSink.KSTypes
 			@test_throws ArgumentError KSOptimalControlProblem(state_eq, cost_func, terminal_cost, initial_state, time_span, control_bounds[1:1])
 		end
 	end
-
 	@testset "Coordinate Systems" begin
 		@testset "KSCartesianCoordinates" begin
-			coords = KSCartesianCoordinates(((0.0, 1.0), (-1, 1), (0, 2.0)))  # Mixing Int and Float
-			@test coords.ranges == ((0.0, 1.0), (-1.0, 1.0), (0.0, 2.0))
-			# @test active_dimensions(coords) == ((0.0, 1.0), (-1.0, 1.0), (0.0, 2.0))
+			coords_2d = KSCartesianCoordinates(((0, 1), (-1, 1)))
+			@test coords_2d.ranges == ((0.0, 1.0), (-1.0, 1.0))
+			@test coords_2d.active == (true, true)
+
+			coords_3d = KSCartesianCoordinates(((0.0, 1.0), (-1, 1), (0, 2.0)))
+			@test coords_3d.ranges == ((0.0, 1.0), (-1.0, 1.0), (0.0, 2.0))
+			@test coords_3d.active == (true, true, true)
+
+			coords_1d = KSCartesianCoordinates((0.0, 1.0))
+			@test coords_1d.ranges == ((0.0, 1.0),)
+			@test coords_1d.active == (true,)
+
+			@test_throws ArgumentError KSCartesianCoordinates(((1.0, 0.0),))  # Invalid range
+			@test_throws ArgumentError KSCartesianCoordinates((1.0, 0.0))  # Invalid range for 1D case
 		end
 
-	                @testset "KSPolarCoordinates" begin
-                coords = KSPolarCoordinates((0, 2.0), (0.0, 2π))  # Mixing Int and Float
-                @test coords.r == (0.0, 2.0)
-                @test all(isapprox.(coords.theta, (0.0, 2π), atol=1e-9))
-                # @test active_dimensions(coords) == ((0.0, 2.0), (0.0, 2π))
+		@testset "KSPolarCoordinates" begin
+			coords_full = KSPolarCoordinates((0.0, 2.0), (0.0, 2π))
+			@test coords_full.r == (0.0, 2.0)
+			@test all(isapprox.(coords_full.theta, (0.0, 2π), atol = 1e-9))
+			@test coords_full.active == (true, true)
 
-                coords_partial = KSPolarCoordinates((0, 2.0), nothing)
-                @test coords_partial.r == (0.0, 2.0)
-                @test coords_partial.theta === nothing
-                # @test active_dimensions(coords_partial) == ((0.0, 2.0),)
-            end
+			coords_partial = KSPolarCoordinates((0.0, 2.0), nothing)
+			@test coords_partial.r == (0.0, 2.0)
+			@test coords_partial.theta === nothing
+			@test coords_partial.active == (true, false)
 
-            @testset "KSCylindricalCoordinates" begin
-                coords = KSCylindricalCoordinates((0, 2.0), (0.0, 2π), (-1, 1))  # Mixing Int and Float
-                @test coords.r == (0.0, 2.0)
-                @test all(isapprox.(coords.theta, (0.0, 2π), atol=1e-9))
-                @test coords.z == (-1.0, 1.0)
-                # @test active_dimensions(coords) == ((0.0, 2.0), (0.0, 2π), (-1.0, 1.0))
+			@test_throws ArgumentError KSPolarCoordinates((-1.0, 1.0), (0.0, 2π))  # Invalid r range
+			@test_throws ArgumentError KSPolarCoordinates((0.0, 1.0), (0.0, 3π))  # Invalid theta range
+		end
 
-                coords_partial = KSCylindricalCoordinates((0, 2.0), (0.0, 2π), nothing)
-                @test coords_partial.r == (0.0, 2.0)
-                @test all(isapprox.(coords_partial.theta, (0.0, 2π), atol=1e-9))
-                @test coords_partial.z === nothing
-                # @test active_dimensions(coords_partial) == ((0.0, 2.0), (0.0, 2π))
-            end
+		@testset "KSCylindricalCoordinates" begin
+			coords_full = KSCylindricalCoordinates((0.0, 2.0), (0.0, 2π), (-1, 1))
+			@test coords_full.r == (0.0, 2.0)
+			@test all(isapprox.(coords_full.theta, (0.0, 2π), atol = 1e-9))
+			@test coords_full.z == (-1.0, 1.0)
+			@test coords_full.active == (true, true, true)
 
-            @testset "KSSphericalCoordinates" begin
-                coords = KSSphericalCoordinates((0, 2.0), (0.0, π), (0, 2π))  # Mixing Int and Float
-                @test coords.r == (0.0, 2.0)
-                @test all(isapprox.(coords.theta, (0.0, π), atol=1e-9))
-                @test all(isapprox.(coords.phi, (0.0, 2π), atol=1e-9))
-                # @test active_dimensions(coords) == ((0.0, 2.0), (0.0, π), (0.0, 2π))
+			coords_partial = KSCylindricalCoordinates((0.0, 2.0), (0.0, 2π), nothing)
+			@test coords_partial.r == (0.0, 2.0)
+			@test all(isapprox.(coords_partial.theta, (0.0, 2π), atol = 1e-9))
+			@test coords_partial.z === nothing
+			@test coords_partial.active == (true, true, false)
 
-                coords_partial = KSSphericalCoordinates((0, 2.0), (0.0, π), nothing)
-                @test coords_partial.r == (0.0, 2.0)
-                @test all(isapprox.(coords_partial.theta, (0.0, π), atol=1e-9))
-                @test coords_partial.phi === nothing
-                # @test active_dimensions(coords_partial) == ((0.0, 2.0), (0.0, π))
-            end
+			@test_throws ArgumentError KSCylindricalCoordinates((-1.0, 1.0), (0.0, 2π), (-1, 1))  # Invalid r range
+		end
+
+		@testset "KSSphericalCoordinates" begin
+			coords_full = KSSphericalCoordinates((0.0, 2.0), (0.0, π), (0.0, 2π))
+			@test coords_full.r == (0.0, 2.0)
+			@test isapprox(coords_full.theta[1], 0.0, atol = 1e-10)
+			@test isapprox(coords_full.theta[2], π, atol = 1e-10)
+			@test isapprox(coords_full.phi[1], 0.0, atol = 1e-10)
+			@test isapprox(coords_full.phi[2], 2π, atol = 1e-10)
+			@test coords_full.active == (true, true, true)
+
+			coords_partial = KSSphericalCoordinates((0.0, 2.0), (0.0, π), nothing)
+			@test coords_partial.r == (0.0, 2.0)
+			@test isapprox(coords_partial.theta[1], 0.0, atol = 1e-10)
+			@test isapprox(coords_partial.theta[2], π, atol = 1e-10)
+			@test coords_partial.phi === nothing
+			@test coords_partial.active == (true, true, false)
+
+			@test_throws ArgumentError KSSphericalCoordinates((0.0, 2.0), (0.0, 2π), (0.0, π))  # Invalid theta range
+			@test_throws ArgumentError KSSphericalCoordinates((0.0, 2.0), (0.0, π), (-π, π))  # Invalid phi range
+		end
 	end
 
 	@testset "Boundary Conditions" begin

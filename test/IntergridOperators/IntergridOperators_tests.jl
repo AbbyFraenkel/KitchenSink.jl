@@ -5,9 +5,7 @@ using KitchenSink.IntergridOperators
 
 @testset "IntergridOperators" begin
 	# Helper functions to create mock objects for testing
-	function create_mock_point(coords::Vector{Float64})
-		return KSPoint{Float64, length(coords)}(SVector{length(coords), Float64}(coords), 1.0)
-	end
+
 
 	function create_mock_element(id::Int, points::Vector{KSPoint{Float64, N}}) where N
 		basis_functions = [KSBasisFunction(i, x -> x[1]^(i - 1)) for i in 1:length(points)]

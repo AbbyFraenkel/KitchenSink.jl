@@ -200,7 +200,6 @@ function KSElement(id::Int, level::Int, polynomial_degree::NTuple{N, Int}; kwarg
 	KSElement{Float64, N}(id, level, polynomial_degree; kwargs...)
 end
 
-
 """
 	KSMesh{T <: Number, N} <: AbstractKSMesh{T, N}
 
@@ -724,152 +723,223 @@ struct KSOptimalControlProblem{T <: Number} <: AbstractKSOptimizationProblem
 		new{T}(state_equations, cost_functions, terminal_cost, initial_state, time_span, control_bounds)
 	end
 end
+# Cartesian Coordinates
 
 """
-KSCartesianCoordinates{T, N} <: AbstractKSCoordinateSystem
+	KSCartesianCoordinates{T, N} <: AbstractKSCoordinateSystem
 
 Represents a Cartesian coordinate system.
 
 # Fields
-- `ranges::NTuple{N, Tuple{T, T}}`: A tuple containing the range for each dimension.
+- `ranges::NTuple{N, Tuple{T, T}}`: A tuple of tuples, where each inner tuple represents the range for a coordinate dimension.
+- `active::NTuple{N, Bool}`: A tuple indicating which dimensions are active.
+
+# Constructor
+- `KSCartesianCoordinates(ranges::NTuple{N, Tuple{T, T}}, active::NTuple{N, Bool}) where {T <: Number, N}`:
+  Creates a `KSCartesianCoordinates` object with the specified ranges and active status for each dimension.
 """
 struct KSCartesianCoordinates{T <: Number, N} <: AbstractKSCoordinateSystem
-    ranges::NTuple{N, Tuple{T, T}}
+	ranges::NTuple{N, Tuple{T, T}}
+	active::NTuple{N, Bool}
 
-    # Existing Constructors
-    function KSCartesianCoordinates{N}(ranges::NTuple{N, Tuple{Number, Number}}) where N
-        T = promote_type(map(el -> typeof(el[1]), ranges)..., map(el -> typeof(el[2]), ranges)...)
-        promoted_ranges = ntuple(i -> (convert(T, ranges[i][1]), convert(T, ranges[i][2])), N)
-        return new{T, N}(promoted_ranges)
-    end
-
-    function KSCartesianCoordinates(ranges::Tuple{Vararg{Tuple{Number, Number}}})
-        N = length(ranges)
-        T = promote_type(map(el -> typeof(el[1]), ranges)..., map(el -> typeof(el[2]), ranges)...)
-        promoted_ranges = ntuple(i -> (convert(T, ranges[i][1]), convert(T, ranges[i][2])), Val(N))
-        return new{T, N}(promoted_ranges)
-    end
-
-    function KSCartesianCoordinates(ranges::Vector{Tuple{Number, Number}})
-        N = length(ranges)
-        T = promote_type(map(el -> typeof(el[1]), ranges)..., map(el -> typeof(el[2]), ranges)...)
-        promoted_ranges = ntuple(i -> (convert(T, ranges[i][1]), convert(T, ranges[i][2])), Val(N))
-        return new{T, N}(promoted_ranges)
-    end
-
-    function KSCartesianCoordinates{T}(ranges::AbstractVector{<:Tuple{T, T}}) where T <: Number
-        N = length(ranges)
-        return new{T, N}(Tuple(ranges))
-    end
-
-    function KSCartesianCoordinates{T, N}(ranges::NTuple{N, Tuple{T, T}}) where {T <: Number, N}
-        return new{T, N}(ranges)
-    end
-
-    # New Constructor for Tuple{FNumber, Number}
-    function KSCartesianCoordinates(range::Tuple{Number, Number})
-        T = promote_type(typeof(range[1]), typeof(range[2]))
-        return new{T, 1}(NTuple{1, Tuple{T, T}}((convert(T, range[1]), convert(T, range[2]))))
-    end
+	function KSCartesianCoordinates{T, N}(ranges::NTuple{N, Tuple{T, T}}, active::NTuple{N, Bool}) where {T <: Number, N}
+		for (i, range) in enumerate(ranges)
+			validate_range(range, "dimension $i", -Inf, Inf)
+		end
+		return new{T, N}(ranges, active)
+	end
 end
 
+# Tuple constructor
+function KSCartesianCoordinates(ranges::Tuple{Vararg{Tuple{Number, Number}}}, active::NTuple{N, Bool}) where {N}
+	T = promote_type(map(x -> promote_type(eltype(x[1]), eltype(x[2])), ranges)...)
+	promoted_ranges = ntuple(i -> (convert(T, ranges[i][1]), convert(T, ranges[i][2])), Val(N))
+	return KSCartesianCoordinates{T, N}(promoted_ranges, active)
+end
+
+# Default constructor with all domains active
+function KSCartesianCoordinates(ranges::Tuple{Vararg{Tuple{Number, Number}}})
+	N = length(ranges)
+	T = promote_type(map(x -> promote_type(eltype(x[1]), eltype(x[2])), ranges)...)
+	promoted_ranges = ntuple(i -> (convert(T, ranges[i][1]), convert(T, ranges[i][2])), Val(N))
+	return KSCartesianCoordinates{T, N}(promoted_ranges, ntuple(i -> true, Val(N)))
+end
+# Adjust KSCartesianCoordinates Constructor for 1D case
+function KSCartesianCoordinates(ranges::Tuple{Number, Number})
+	return KSCartesianCoordinates(((ranges,)), (true,))
+end
 
 """
-KSPolarCoordinates{T} <: AbstractKSCoordinateSystem
+	KSPolarCoordinates{T} <: AbstractKSCoordinateSystem
 
 Represents a polar coordinate system.
 
 # Fields
-- `r::Union{Tuple{T, T}, Nothing}`: The radial distance from the origin.
-- `theta::Union{Tuple{T, T}, Nothing}`: The angle in radians from the positive x-axis.
+- `r::Union{Tuple{T, T}, Nothing}`: The radial coordinate range, or `nothing` if inactive.
+- `theta::Union{Tuple{T, T}, Nothing}`: The angular coordinate range, or `nothing` if inactive.
+- `active::NTuple{2, Bool}`: A tuple indicating which dimensions (r, theta) are active.
+
+# Constructor
+- `KSPolarCoordinates(r::Union{Tuple{Number, Number}, Nothing}, theta::Union{Tuple{Number, Number}, Nothing})`:
+  Creates a `KSPolarCoordinates` object with the specified ranges and active status for the radial and angular coordinates.
 """
+# Polar Coordinates
 struct KSPolarCoordinates{T <: Number} <: AbstractKSCoordinateSystem
 	r::Union{Tuple{T, T}, Nothing}
 	theta::Union{Tuple{T, T}, Nothing}
+	active::NTuple{2, Bool}
 
 	function KSPolarCoordinates(r::Union{Tuple{Number, Number}, Nothing}, theta::Union{Tuple{Number, Number}, Nothing})
-		T = promote_type(r !== nothing ? typeof(r[1]) : Float64,
-						 r !== nothing ? typeof(r[2]) : Float64,
-						 theta !== nothing ? typeof(theta[1]) : Float64,
-						 theta !== nothing ? typeof(theta[2]) : Float64)
-		promoted_r = r !== nothing ? (convert(T, r[1]), convert(T, r[2])) : nothing
-		promoted_theta = theta !== nothing ? (convert(T, theta[1]), convert(T, theta[2])) : nothing
-		new{T}(promoted_r, promoted_theta)
+		T = promote_type(r !== nothing ? typeof(r[1]) : Float64, theta !== nothing ? typeof(theta[1]) : Float64)
+
+		if r !== nothing
+			r = validate_range(r, "r", zero(T), Inf)
+		end
+		if theta !== nothing
+			theta = validate_range(theta, "theta", zero(T), mod2pi(2π))
+		end
+
+		active = (r !== nothing, theta !== nothing)
+
+		return new{T}(r !== nothing ? (convert(T, r[1]), convert(T, r[2])) : nothing,
+					  theta !== nothing ? (convert(T, theta[1]), convert(T, theta[2])) : nothing,
+					  active)
 	end
 end
 
 """
-KSCylindricalCoordinates{T} <: AbstractKSCoordinateSystem
+	KSCylindricalCoordinates{T} <: AbstractKSCoordinateSystem
 
 Represents a cylindrical coordinate system.
 
 # Fields
-- `r::Union{Tuple{T, T}, Nothing}`: The radial distance from the z-axis.
-- `theta::Union{Tuple{T, T}, Nothing}`: The azimuthal angle in radians from the positive x-axis.
-- `z::Union{Tuple{T, T}, Nothing}`: The height above the xy-plane.
+- `r::Union{Tuple{T, T}, Nothing}`: The radial coordinate range, or `nothing` if inactive.
+- `theta::Union{Tuple{T, T}, Nothing}`: The angular coordinate range, or `nothing` if inactive.
+- `z::Union{Tuple{T, T}, Nothing}`: The axial coordinate range, or `nothing` if inactive.
+- `active::NTuple{3, Bool}`: A tuple indicating which dimensions (r, theta, z) are active.
+
+# Constructor
+- `KSCylindricalCoordinates(r::Union{Tuple{Number, Number}, Nothing}, theta::Union{Tuple{Number, Number}, Nothing}, z::Union{Tuple{Number, Number}, Nothing})`:
+  Creates a `KSCylindricalCoordinates` object with the specified ranges and active status for the radial, angular, and axial coordinates.
 """
 
+# Cylindrical Coordinates
 struct KSCylindricalCoordinates{T <: Number} <: AbstractKSCoordinateSystem
 	r::Union{Tuple{T, T}, Nothing}
 	theta::Union{Tuple{T, T}, Nothing}
 	z::Union{Tuple{T, T}, Nothing}
+	active::NTuple{3, Bool}
 
 	function KSCylindricalCoordinates(r::Union{Tuple{Number, Number}, Nothing}, theta::Union{Tuple{Number, Number}, Nothing}, z::Union{Tuple{Number, Number}, Nothing})
-		T = promote_type(r !== nothing ? typeof(r[1]) : Float64,
-						 r !== nothing ? typeof(r[2]) : Float64,
-						 theta !== nothing ? typeof(theta[1]) : Float64,
-						 theta !== nothing ? typeof(theta[2]) : Float64,
-						 z !== nothing ? typeof(z[1]) : Float64,
-						 z !== nothing ? typeof(z[2]) : Float64)
-		promoted_r = r !== nothing ? (convert(T, r[1]), convert(T, r[2])) : nothing
-		promoted_theta = theta !== nothing ? (convert(T, theta[1]), convert(T, theta[2])) : nothing
-		promoted_z = z !== nothing ? (convert(T, z[1]), convert(T, z[2])) : nothing
-		new{T}(promoted_r, promoted_theta, promoted_z)
+		T = promote_type(r !== nothing ? typeof(r[1]) : Float64, theta !== nothing ? typeof(theta[1]) : Float64, z !== nothing ? typeof(z[1]) : Float64)
+
+		if r !== nothing
+			r = validate_range(r, "r", zero(T), Inf)
+		end
+		if theta !== nothing
+			theta = validate_range(theta, "theta", zero(T), mod2pi(2π))
+		end
+		if z !== nothing
+			z = validate_range(z, "z", -Inf, Inf)
+		end
+
+		active = (r !== nothing, theta !== nothing, z !== nothing)
+
+		return new{T}(r !== nothing ? (convert(T, r[1]), convert(T, r[2])) : nothing,
+					  theta !== nothing ? (convert(T, theta[1]), convert(T, theta[2])) : nothing,
+					  z !== nothing ? (convert(T, z[1]), convert(T, z[2])) : nothing,
+					  active)
 	end
 end
 
 """
-KSSphericalCoordinates{T} <: AbstractKSCoordinateSystem
+	KSSphericalCoordinates{T} <: AbstractKSCoordinateSystem
 
 Represents a spherical coordinate system.
 
 # Fields
-- `r::Union{Tuple{T, T}, Nothing}`: The radial distance from the origin.
-- `theta::Union{Tuple{T, T}, Nothing}`: The azimuthal angle in radians from the positive x-axis.
-- `phi::Union{Tuple{T, T}, Nothing}`: The polar angle in radians from the positive z-axis.
-"""
+- `r::Union{Tuple{T, T}, Nothing}`: The radial coordinate range, or `nothing` if inactive.
+- `theta::Union{Tuple{T, T}, Nothing}`: The polar angle range, or `nothing` if inactive.
+- `phi::Union{Tuple{T, T}, Nothing}`: The azimuthal angle range, or `nothing` if inactive.
+- `active::NTuple{3, Bool}`: A tuple indicating which dimensions (r, theta, phi) are active.
 
+# Constructor
+- `KSSphericalCoordinates(r::Union{Tuple{Number, Number}, Nothing}, theta::Union{Tuple{Number, Number}, Nothing}, phi::Union{Tuple{Number, Number}, Nothing})`:
+  Creates a `KSSphericalCoordinates` object with the specified ranges and active status for the radial, polar, and azimuthal coordinates.
+"""
+# Spherical Coordinates
 struct KSSphericalCoordinates{T <: Number} <: AbstractKSCoordinateSystem
 	r::Union{Tuple{T, T}, Nothing}
 	theta::Union{Tuple{T, T}, Nothing}
 	phi::Union{Tuple{T, T}, Nothing}
+	active::NTuple{3, Bool}
 
 	function KSSphericalCoordinates(r::Union{Tuple{Number, Number}, Nothing}, theta::Union{Tuple{Number, Number}, Nothing}, phi::Union{Tuple{Number, Number}, Nothing})
-		T = promote_type(r !== nothing ? typeof(r[1]) : Float64,
-						 r !== nothing ? typeof(r[2]) : Float64,
-						 theta !== nothing ? typeof(theta[1]) : Float64,
-						 theta !== nothing ? typeof(theta[2]) : Float64,
-						 phi !== nothing ? typeof(phi[1]) : Float64,
-						 phi !== nothing ? typeof(phi[2]) : Float64)
-		promoted_r = r !== nothing ? (convert(T, r[1]), convert(T, r[2])) : nothing
-		promoted_theta = theta !== nothing ? (convert(T, theta[1]), convert(T, theta[2])) : nothing
-		promoted_phi = phi !== nothing ? (convert(T, phi[1]), convert(T, phi[2])) : nothing
-		new{T}(promoted_r, promoted_theta, promoted_phi)
+		T = promote_type(r !== nothing ? typeof(r[1]) : Float64, theta !== nothing ? typeof(theta[1]) : Float64, phi !== nothing ? typeof(phi[1]) : Float64)
+
+		if r !== nothing
+			r = validate_range(r, "r", zero(T), Inf)
+		end
+		if theta !== nothing
+			theta = validate_range(theta, "theta", zero(T), π)
+		end
+		if phi !== nothing
+			phi = validate_range(phi, "phi", zero(T), mod2pi(2π))
+		end
+
+		active = (r !== nothing, theta !== nothing, phi !== nothing)
+
+		return new{T}(r !== nothing ? (convert(T, r[1]), convert(T, r[2])) : nothing,
+					  theta !== nothing ? (convert(T, theta[1]), convert(T, theta[2])) : nothing,
+					  phi !== nothing ? (convert(T, phi[1]), convert(T, phi[2])) : nothing,
+					  active)
 	end
 end
-# Helper function to validate ranges
-function validate_range(range::Union{Tuple{T, T}, Nothing}, name::String, min_val::T, max_val::Union{T, Nothing}) where T <: Number
-	if range !== nothing
-		if length(range) != 2
-			throw(ArgumentError("Invalid $name range $(range): must be a tuple of length 2."))
-		end
-		if range[1] > range[2]
-			throw(ArgumentError("Invalid $name range $(range): lower bound must be <= upper bound."))
-		end
-		if range[1] < min_val || (max_val !== nothing && range[2] > max_val)
-			throw(ArgumentError("Invalid $name range $(range): must be within [$min_val, $max_val]."))
+
+"""
+	validate_range(range::Union{Tuple{T1, T2}, Nothing}, name::String, min_val::Number, max_val::Union{Number, Nothing} = nothing) where {T1 <: Number, T2 <: Number}
+
+Validates and potentially normalizes a coordinate range.
+
+# Arguments
+- `range::Union{Tuple{T1, T2}, Nothing}`: The range to be validated, or `nothing` if inactive.
+- `name::String`: The name of the coordinate (e.g., "r", "theta").
+- `min_val::Number`: The minimum allowed value for the range.
+- `max_val::Union{Number, Nothing}`: The maximum allowed value for the range, or `nothing` if no upper limit.
+
+# Returns
+- A validated and normalized range as a tuple of two values.
+
+# Throws
+- `ArgumentError` if the range is invalid (e.g., if the lower bound is greater than the upper bound, or if the range exceeds specified limits).
+"""
+# Validate Range Function
+function validate_range(range::Union{Tuple{T1, T2}, Nothing}, name::String, min_val::Number, max_val::Union{Number, Nothing} = nothing) where {T1 <: Number, T2 <: Number}
+	range === nothing && return
+
+	length(range) != 2 && throw(ArgumentError("Invalid $name range $range: must be a tuple of length 2."))
+
+	T = promote_type(T1, T2, typeof(min_val), typeof(max_val))
+	range = (convert(T, range[1]), convert(T, range[2]))
+
+	range[1] > range[2] && throw(ArgumentError("Invalid $name range $range: lower bound must be <= upper bound."))
+
+	range[1] < min_val && throw(ArgumentError("Invalid $name range $range: must be >= $min_val."))
+
+	if max_val !== nothing
+		if name in ["theta", "phi"]
+			range[2] > max_val && throw(ArgumentError("Invalid $name range $range: $name must be <= $max_val."))
+			# Normalize angles to the valid range [0, max_val]
+			range = (mod2pi(float(range[1])), mod2pi(float(range[2])))
+			if range[1] > range[2]
+				throw(ArgumentError("Invalid $name range $range: lower bound must be <= upper bound after normalization."))
+			end
+		else
+			range[2] > max_val && throw(ArgumentError("Invalid $name range $range: must be <= $max_val."))
 		end
 	end
+
+	return range
 end
 
 """

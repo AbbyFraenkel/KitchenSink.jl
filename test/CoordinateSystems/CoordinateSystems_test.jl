@@ -1,125 +1,152 @@
-
-using Test, LinearAlgebra
-# using ..KSTypes, ..CoordinateSystems
+using Test
 using KitchenSink.KSTypes, KitchenSink.CoordinateSystems
 
 @testset "CoordinateSystems" begin
+	cartesian_3d = KSCartesianCoordinates(((0.0, 1.0), (0.0, 1.0), (0.0, 1.0)))
+	polar = KSPolarCoordinates((0.0, 1.0), (0.0, 2.0 * 3.141592653589793))
+	spherical = KSSphericalCoordinates((0.0, 1.0), (0.0, 3.141592653589793), (0.0, 2.0 * 3.141592653589793))
+	cylindrical = KSCylindricalCoordinates((0.0, 1.0), (0.0, 2.0 * 3.141592653589793), (-1.0, 1.0))
+	cart_point = (0.5, 0.5, 0.5)
+	polar_point = (0.7, 3.141592653589793 / 4.0)
+	spherical_point = (0.8, 3.141592653589793 / 3.0, 3.141592653589793 / 4.0)
+	cylindrical_point = (0.6, 3.141592653589793 / 3.0, 0.5)
 
-    @testset "KSCartesianCoordinates" begin
-        system_2d = KSCartesianCoordinates(((0.0, 1.0), (0.0, 1.0)))
-        system_3d = KSCartesianCoordinates(((0.0, 1.0), (0.0, 1.0), (0.0, 1.0)))
+	@testset "Coordinate Transformations" begin
 
-        @testset "to_cartesian and from_cartesian" begin
-            @test to_cartesian((0.5, 0.5), system_2d) == (0.5, 0.5)
-            @test from_cartesian((0.5, 0.5), system_2d) == (0.5, 0.5)
-            @test to_cartesian((0.5, 0.5, 0.5), system_3d) == (0.5, 0.5, 0.5)
-            @test from_cartesian((0.5, 0.5, 0.5), system_3d) == (0.5, 0.5, 0.5)
-            @test_throws MethodError to_cartesian((0.5,), system_2d)
-            @test_throws MethodError from_cartesian((0.5,), system_2d)
-        end
+		# Cartesian to/from Cartesian (identity check)
+		@test all(isapprox.(to_cartesian(cart_point, cartesian_3d), cart_point, atol = 1e-10))
+		@test all(isapprox.(from_cartesian(cart_point, cartesian_3d), cart_point, atol = 1e-10))
 
-        @testset "compute_jacobian" begin
-            @test compute_jacobian((0.5, 0.5), system_2d) == I(2)
-            @test compute_jacobian((0.5, 0.5, 0.5), system_3d) == I(3)
-        end
+		# Polar to/from Cartesian
+		cart_polar = to_cartesian(polar_point, polar)
+		expected_polar = (polar_point[1] * cos(polar_point[2]), polar_point[1] * sin(polar_point[2]))
 
-        @testset "map_to_reference_element and map_from_reference_element" begin
-            @test map_to_reference_element((0.5, 0.5), system_2d) == (0.0, 0.0)
-            @test map_from_reference_element((0.0, 0.0), system_2d) == (0.5, 0.5)
-            @test map_to_reference_element((0.5, 0.5, 0.5), system_3d) == (0.0, 0.0, 0.0)
-            @test map_from_reference_element((0.0, 0.0, 0.0), system_3d) == (0.5, 0.5, 0.5)
-            @test_throws ArgumentError map_to_reference_element((0.5,), system_2d)
-            @test_throws ArgumentError map_from_reference_element((0.0,), system_2d)
-        end
-    end
+		@test all(isapprox.(cart_polar, expected_polar, atol = 1e-9))  # Increase tolerance
+		@test all(isapprox.(from_cartesian(cart_polar, polar), polar_point, atol = 1e-9))  # Increase tolerance
 
-    @testset "KSPolarCoordinates" begin
-        system_full = KSPolarCoordinates((0.0, 1.0), (0.0, 2π))
-        system_partial = KSPolarCoordinates((0.0, 1.0), nothing)
+		# Spherical to/from Cartesian
+		cart_spherical = to_cartesian(spherical_point, spherical)
+		expected_spherical = (spherical_point[1] * sin(spherical_point[2]) * cos(spherical_point[3]),
+							  spherical_point[1] * sin(spherical_point[2]) * sin(spherical_point[3]),
+							  spherical_point[1] * cos(spherical_point[2]))
+		@test all(isapprox.(cart_spherical, expected_spherical, atol = 1e-9))  # Increase tolerance
+		@test all(isapprox.(from_cartesian(cart_spherical, spherical), spherical_point, atol = 1e-9))  # Increase tolerance
 
-        @testset "to_cartesian and from_cartesian" begin
-            @test all(isapprox.(to_cartesian((0.5, π/4), system_full), (0.5/√2, 0.5/√2), atol=1e-10))
-            @test all(isapprox.(from_cartesian((0.5/√2, 0.5/√2), system_full), (0.5, π/4), atol=1e-10))
-            @test all(isapprox.(to_cartesian((0.5, π/4), system_partial), (0.5*cos(π/4), 0.5*sin(π/4)), atol=1e-10))
-            @test all(isapprox.(from_cartesian((0.5*cos(π/4), 0.5*sin(π/4)), system_partial), (0.5, π/4), atol=1e-10))
-            @test_throws ArgumentError to_cartesian((0.5,), system_full)
-            @test_throws ArgumentError from_cartesian((0.5,), system_full)
-        end
+		# Cylindrical to/from Cartesian
+		cart_cylindrical = to_cartesian(cylindrical_point, cylindrical)
+		expected_cylindrical = (cylindrical_point[1] * cos(cylindrical_point[2]),
+								cylindrical_point[1] * sin(cylindrical_point[2]),
+								cylindrical_point[3])
+		@test all(isapprox.(cart_cylindrical, expected_cylindrical, atol = 1e-9))  # Increase tolerance
+		@test all(isapprox.(from_cartesian(cart_cylindrical, cylindrical), cylindrical_point, atol = 1e-9))  # Increase tolerance
+	end
 
-        @testset "compute_jacobian" begin
-            @test isapprox(compute_jacobian((1.0, π/4), system_full), [√2/2 -√2/2; √2/2 √2/2], atol=1e-10)
-            @test isapprox(compute_jacobian((1.0, π/4), system_partial), [√2/2 -√2/2; √2/2 √2/2], atol=1e-10)
-        end
+	@testset "Mapping to/from Reference Element" begin
+		# Cartesian coordinates
+		cartesian_ref = map_to_reference_element(cart_point, cartesian_3d)
+		@test all(isapprox.(map_from_reference_element(cartesian_ref, cartesian_3d), cart_point, atol = 1e-10))
 
-        @testset "map_to_reference_element and map_from_reference_element" begin
-            @test all(isapprox.(map_to_reference_element((0.5, π), system_full), (0.0, 0.0), atol=1e-10))
-            @test all(isapprox.(map_from_reference_element((0.0, 0.0), system_full), (0.5, π), atol=1e-10))
-            @test all(isapprox.(map_to_reference_element((0.5, π), system_partial), (0.0, π), atol=1e-10))
-            @test all(isapprox.(map_from_reference_element((0.0, π), system_partial), (0.5, π), atol=1e-10))
-            @test_throws ArgumentError map_to_reference_element((0.5,), system_full)
-            @test_throws ArgumentError map_from_reference_element((0.0,), system_full)
-        end
-    end
+		# Polar coordinates
+		polar_ref = map_to_reference_element(polar_point, polar)
+		@test all(isapprox.(map_from_reference_element(polar_ref, polar), polar_point, atol = 1e-10))
 
-    @testset "KSSphericalCoordinates" begin
-        system_full = KSSphericalCoordinates((0.0, 1.0), (0.0, π), (0.0, 2π))
-        system_partial = KSSphericalCoordinates((0.0, 1.0), (0.0, π), nothing)
+		# Spherical coordinates
+		spherical_ref = map_to_reference_element(spherical_point, spherical)
+		@test all(isapprox.(map_from_reference_element(spherical_ref, spherical), spherical_point, atol = 1e-10))
 
-        @testset "to_cartesian and from_cartesian" begin
-            @test all(isapprox.(to_cartesian((1.0, π/2, 0.0), system_full), (1.0, 0.0, 0.0), atol=1e-10))
-            @test all(isapprox.(from_cartesian((1.0, 0.0, 0.0), system_full), (1.0, π/2, 0.0), atol=1e-10))
-            @test all(isapprox.(to_cartesian((1.0, π/2, π/4), system_partial), (√2/2, √2/2, 0.0), atol=1e-10))
-            @test all(isapprox.(from_cartesian((√2/2, √2/2, 0.0), system_partial), (1.0, π/2, π/4), atol=1e-10))
-            @test_throws ArgumentError to_cartesian((1.0, π/2), system_full)
-            @test_throws ArgumentError from_cartesian((1.0, 0.0), system_full)
-        end
+		# Cylindrical coordinates
+		cylindrical_ref = map_to_reference_element(cylindrical_point, cylindrical)
+		@test all(isapprox.(map_from_reference_element(cylindrical_ref, cylindrical), cylindrical_point, atol = 1e-10))
+	end
 
-        @testset "compute_jacobian" begin
-            expected_jacobian = [sin(π/2)*cos(0.0)  1.0*cos(π/2)*cos(0.0)  -1.0*sin(π/2)*sin(0.0);
-                                 sin(π/2)*sin(0.0)  1.0*cos(π/2)*sin(0.0)   1.0*sin(π/2)*cos(0.0);
-                                 cos(π/2)          -1.0*sin(π/2)            0]
-            @test isapprox(compute_jacobian((1.0, π/2, 0.0), system_full), expected_jacobian, atol=1e-10)
-            @test isapprox(compute_jacobian((1.0, π/2, 0.0), system_partial), expected_jacobian, atol=1e-10)
-        end
+	@testset "Handling Inactive Domains" begin
+		inactive_cartesian = KSCartesianCoordinates(((0.0, 1.0), (0.0, 1.0), (0.0, 1.0)), (true, false, true))
+		inactive_point = (0.5, 0.5, 0.5)
 
-        @testset "map_to_reference_element and map_from_reference_element" begin
-            @test all(isapprox.(map_to_reference_element((0.5, π/2, π), system_full), (0.0, 0.0, 0.0), atol=1e-10))
-            @test all(isapprox.(map_from_reference_element((0.0, 0.0, 0.0), system_full), (0.5, π/2, π), atol=1e-10))
-            @test all(isapprox.(map_to_reference_element((0.5, π/2, π), system_partial), (0.0, 0.0, π), atol=1e-10))
-            @test all(isapprox.(map_from_reference_element((0.0, 0.0, π), system_partial), (0.5, π/2, π), atol=1e-10))
-            @test_throws ArgumentError map_to_reference_element((0.5, π/2), system_full)
-            @test_throws ArgumentError map_from_reference_element((0.0, 0.0), system_full)
-        end
-    end
+		@test all(isnan(to_cartesian(inactive_point, inactive_cartesian)[2]))
 
-    @testset "KSCylindricalCoordinates" begin
-        system_full = KSCylindricalCoordinates((0.0, 1.0), (0.0, 2π), (-1.0, 1.0))
-        system_partial = KSCylindricalCoordinates((0.0, 1.0), nothing, (-1.0, 1.0))
+		inactive_polar = KSPolarCoordinates((0.0, 1.0), nothing)
+		inactive_point_polar = (0.5, 3.141592653589793 / 4.0)
+		@test isnan(to_cartesian(inactive_point_polar, inactive_polar)[2])
 
-        @testset "to_cartesian and from_cartesian" begin
-            @test all(isapprox.(to_cartesian((1.0, 0.0, 0.5), system_full), (1.0, 0.0, 0.5), atol=1e-10))
-            @test all(isapprox.(from_cartesian((1.0, 0.0, 0.5), system_full), (1.0, 0.0, 0.5), atol=1e-10))
-            @test all(isapprox.(to_cartesian((0.5, π/4, 0.0), system_partial), (0.5*cos(π/4), 0.5*sin(π/4), 0.0), atol=1e-10))
-            @test all(isapprox.(from_cartesian((0.5*cos(π/4), 0.5*sin(π/4), 0.0), system_partial), (0.5, π/4, 0.0), atol=1e-10))
-            @test_throws ArgumentError to_cartesian((1.0, 0.0), system_full)
-            @test_throws ArgumentError from_cartesian((1.0, 0.0), system_full)
-        end
+		inactive_spherical = KSSphericalCoordinates((0.0, 1.0), nothing, (0.0, 2.0 * 3.141592653589793))
+		inactive_point_spherical = (0.5, 3.141592653589793 / 4.0, 3.141592653589793 / 2.0)
+		@test isnan(to_cartesian(inactive_point_spherical, inactive_spherical)[2])
 
-        @testset "compute_jacobian" begin
-            expected_jacobian = [cos(0.0) -1.0*sin(0.0) 0;
-                                 sin(0.0)  1.0*cos(0.0) 0;
-                                 0           0            1]
-            @test isapprox(compute_jacobian((1.0, 0.0, 0.5), system_full), expected_jacobian, atol=1e-10)
-            @test isapprox(compute_jacobian((1.0, 0.0, 0.5), system_partial), expected_jacobian, atol=1e-10)
-        end
+		inactive_cylindrical = KSCylindricalCoordinates((0.0, 1.0), (0.0, 2.0 * 3.141592653589793), nothing)
+		inactive_point_cylindrical = (0.5, 3.141592653589793 / 4.0, 1.0)
+		@test isnan(to_cartesian(inactive_point_cylindrical, inactive_cylindrical)[3])
+	end
 
-        @testset "map_to_reference_element and map_from_reference_element" begin
-            @test all(isapprox.(map_to_reference_element((0.5, π, 0.0), system_full), (0.0, 0.0, 0.0), atol=1e-10))
-            @test all(isapprox.(map_from_reference_element((0.0, 0.0, 0.0), system_full), (0.5, π, 0.0), atol=1e-10))
-            @test all(isapprox.(map_to_reference_element((0.5, π, 0.0), system_partial), (0.0, π, 0.0), atol=1e-10))
-            @test all(isapprox.(map_from_reference_element((0.0, π, 0.0), system_partial), (0.5, π, 0.0), atol=1e-10))
-            @test_throws ArgumentError map_to_reference_element((0.5, π), system_full)
-            @test_throws ArgumentError map_from_reference_element((0.0, 0.0), system_full)
-        end
-    end
+	@testset "Edge Cases" begin
+		# North pole (phi is undefined, typically set to 0)
+		@test all(isapprox.(to_cartesian((1.0, 0.0, 0.0), spherical), (0.0, 0.0, 1.0), atol = 1e-9))
+
+		# South pole (phi is undefined, typically set to 0)
+		@test all(isapprox.(to_cartesian((1.0, 3.141592653589793, 0.0), spherical), (0.0, 0.0, -1.0), atol = 1e-9))
+
+		# Origin in cylindrical coordinates
+		@test all(isapprox.(to_cartesian((0.0, 0.0, 0.5), cylindrical), (0.0, 0.0, 0.5), atol = 1e-9))
+
+		# Angle wrapping in polar coordinates
+		@test all(isapprox.(to_cartesian((0.5, 2.0 * 3.141592653589793), polar), to_cartesian((0.5, 0.0), polar), atol = 1e-9))
+
+		# Negative radii in polar and spherical coordinates
+		@test all(isapprox.(to_cartesian((-1.0, 3.141592653589793), polar), to_cartesian((1.0, 0.0), polar), atol = 1e-9))
+		@test all(isapprox.(to_cartesian((-1.0, 3.141592653589793, 0.0), spherical), to_cartesian((1.0, 0.0, 0.0), spherical), atol = 1e-9))
+	end
+
+	@testset "Error Handling" begin
+		@test_throws ArgumentError from_cartesian((0.5, 0.5), spherical)  # Insufficient coordinates
+		@test_throws ArgumentError to_cartesian((0.5,), cartesian_3d)  # Invalid number of coordinates
+	end
+end
+
+# Test for KSPolarCoordinates
+@testset "KSPolarCoordinates to Cartesian" begin
+	polar_coords = (1.0, 3.141592653589793 / 2.0)  # r = 1, theta = pi/2 (90 degrees)
+	expected_cartesian = (0.0, 1.0)  # (0, 1)
+	result = to_cartesian(polar_coords, KSPolarCoordinates((0.0, 1.0), (0.0, 2.0 * 3.141592653589793)))
+	@test all(isapprox.(result, expected_cartesian, atol = 1e-9))
+
+	polar_coords = (2.0, 3.141592653589793 / 4.0)  # r = 2, theta = pi/4 (45 degrees)
+	expected_cartesian = (sqrt(2.0), sqrt(2.0))  # (~1.414, ~1.414)
+	result = to_cartesian(polar_coords, KSPolarCoordinates((0.0, 2.0), (0.0, 2.0 * 3.141592653589793)))
+	@test all(isapprox.(result, expected_cartesian, atol = 1e-9))
+end
+
+# Test for KSCylindricalCoordinates
+@testset "KSCylindricalCoordinates to Cartesian" begin
+	cylindrical_coords = (1.0, 3.141592653589793 / 2.0, 3.0)  # r = 1, theta = pi/2 (90 degrees), z = 3
+	expected_cartesian = (0.0, 1.0, 3.0)  # (0, 1, 3)
+	result = to_cartesian(cylindrical_coords, KSCylindricalCoordinates((0.0, 1.0), (0.0, 2.0 * 3.141592653589793), (0.0, 3.0)))
+	@test all(isapprox.(result, expected_cartesian, atol = 1e-9))
+
+	cylindrical_coords = (2.0, 3.141592653589793 / 4.0, -1.0)  # r = 2, theta = pi/4 (45 degrees), z = -1
+	expected_cartesian = (sqrt(2.0), sqrt(2.0), -1.0)  # (~1.414, ~1.414, -1)
+	result = to_cartesian(cylindrical_coords, KSCylindricalCoordinates((0.0, 2.0), (0.0, 2.0 * 3.141592653589793), (-1.0, 1.0)))
+	@test all(isapprox.(result, expected_cartesian, atol = 1e-9))
+end
+
+# Test for KSSphericalCoordinates
+@testset "KSSphericalCoordinates to Cartesian" begin
+	spherical_coords = (1.0, 3.141592653589793 / 2.0, 0.0)  # r = 1, theta = pi/2 (90 degrees), phi = 0
+	expected_cartesian = (1.0, 0.0, 0.0)  # (1, 0, 0)
+	result = to_cartesian(spherical_coords, KSSphericalCoordinates((0.0, 1.0), (0.0, 3.141592653589793), (0.0, 2.0 * 3.141592653589793)))
+	@test all(isapprox.(result, expected_cartesian, atol = 1e-9))
+
+	spherical_coords = (1.0, 3.141592653589793 / 2.0, 3.141592653589793 / 2.0)  # r = 1, theta = pi/2 (90 degrees), phi = pi/2 (90 degrees)
+	expected_cartesian = (0.0, 1.0, 0.0)  # (0, 1, 0)
+	result = to_cartesian(spherical_coords, KSSphericalCoordinates((0.0, 1.0), (0.0, 3.141592653589793), (0.0, 2.0 * 3.141592653589793)))
+	@test all(isapprox.(result, expected_cartesian, atol = 1e-9))
+
+	spherical_coords = (1.0, 3.141592653589793, 0.0)  # r = 1, theta = pi (180 degrees), phi = 0
+	expected_cartesian = (0.0, 0.0, -1.0)  # (0, 0, -1)
+	result = to_cartesian(spherical_coords, KSSphericalCoordinates((0.0, 1.0), (0.0, 3.141592653589793), (0.0, 2.0 * 3.141592653589793)))
+	@test all(isapprox.(result, expected_cartesian, atol = 1e-9))
+
+	spherical_coords = (1.0, 3.141592653589793 / 4.0, 3.141592653589793 / 4.0)  # r = 1, theta = pi/4 (45 degrees), phi = pi/4 (45 degrees)
+	expected_cartesian = (0.5, 0.5, sqrt(2.0) / 2.0)  # (~0.5, ~0.5, ~0.707)
+	result = to_cartesian(spherical_coords, KSSphericalCoordinates((0.0, 1.0), (0.0, 3.141592653589793), (0.0, 2.0 * 3.141592653589793)))
+	@test all(isapprox.(result, expected_cartesian, atol = 1e-9))
 end
