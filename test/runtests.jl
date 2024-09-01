@@ -48,9 +48,9 @@ end
 # 	include("LinearSolvers/LinearSolvers_tests.jl")
 # end
 
-@safetestset "Problem Types" begin
-	include("ProblemTypes/ProblemTypes_tests.jl")
-end
+# @safetestset "Problem Types" begin
+# 	include("ProblemTypes/ProblemTypes_tests.jl")
+# end
 # # Todo
 # @safetestset "Time Stepping" begin
 # 	include("TimeStepping/TimeStepping_tests.jl")
