@@ -1,22 +1,22 @@
 name: CI
-on:
-  pull_request:
-    branches:
-      - main
-  push:
-    branches:
-      - main
-    tags: '*'
+
+on: [push, pull_request]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - name: Checkout code
+      uses: actions/checkout@v2
+
     - name: Set up Julia
       uses: julia-actions/setup-julia@v1
+      with:
+        version: '1.6'
+
     - name: Install dependencies
       run: julia -e 'using Pkg; Pkg.instantiate()'
+
     - name: Run tests
       run: julia -e 'using Pkg; Pkg.test()'
