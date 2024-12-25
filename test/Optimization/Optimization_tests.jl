@@ -1,111 +1,210 @@
-using Test, LinearAlgebra, JuMP, Ipopt
-
+using Test
+using LinearAlgebra, StaticArrays
+using JuMP
+using Ipopt
+using KitchenSink.KSTypes
+using KitchenSink.ProblemTypes
 using KitchenSink.Optimization
+using KitchenSink.CacheManagement, KitchenSink.NumericUtilities
 
-@testset "Optimization Tests" begin
-    @testset "Problem Discretization" begin
-        @testset "discretize_and_optimize" begin
-            # Test problem: minimize ∫(u^2 + (∂u/∂x)^2)dx subject to -∂²u/∂x² = f(x), u(0) = u(1) = 0
-            problem = KSPDEProblem(
-                (u, x, t) -> -sum(∇²(u)),
-                (u, x) -> 0.0,
-                (0.0, 1.0),
-                ((0.0, 1.0),),
-                x -> sin(π * x[1])
-            )
-            num_elements = (10,)
-            tspan = (0.0, 1.0)
-            degree = 3
-            solver_options = KSSolverOptions(100, 1e-6, true, 3, 0.1, 10, 2)
+include("../test_utils_with_deps.jl")
 
-            model, solution = discretize_and_optimize(problem, num_elements, tspan, degree, solver_options)
+@testset "Optimization" begin
+	@testset "solve_optimal_control_problem" begin
+		for dim in TEST_DIMENSIONS
+			problem = create_test_optimal_control_problem()
+			mesh, _ = create_test_mesh(dim)
 
-            @test model isa JuMP.Model
-            @test solution isa Matrix
-            @test size(solution, 1) == 11  # 10 elements + 1 boundary
-            @test size(solution, 2) == 2   # Start and end time points
+			A = create_spd_matrix(problem.num_vars)
+			b = randn(problem.num_vars)
 
-            # Check boundary conditions
-            @test all(isapprox.(solution[1, :], 0.0, atol=1e-6))
-            @test all(isapprox.(solution[end, :], 0.0, atol=1e-6))
+			solution = Optimization.solve_optimal_control_problem(A, b, problem, mesh)
 
-            # Check if solution is reasonable (should be close to sin(πx))
-            x = range(0, 1, length=size(solution, 1))
-            analytical_solution = sin.(π * x)
-            @test isapprox(solution[:, end], analytical_solution, rtol=1e-2)
-        end
-    end
+			@test size(solution.state, 1) == problem.num_vars
+			@test size(solution.state, 2) == problem.num_time_steps
+			@test size(solution.control, 1) == problem.num_controls
+			@test size(solution.control, 2) == problem.num_time_steps - 1
+			@test solution.state[:, 1] ≈ problem.initial_state
+			@test solution.objective >= 0
+		end
+	end
 
-    @testset "Optimal Control Problems" begin
-        @testset "solve_optimal_control_problem" begin
-            # Test problem: minimize ∫(x²(t) + u²(t))dt subject to dx/dt = -x + u, x(0) = 1
-            problem = KSOptimalControlProblem{Float64}(
-                (x, u, t) -> -x + u,           # State equation
-                (x, u) -> x^2 + u^2,           # Cost function
-                x -> 0.0,                      # Terminal cost
-                [1.0],                         # Initial state
-                (0.0, 1.0),                    # Time span
-                [(-Inf, Inf)]                  # Control bounds
-            )
-            solver = KSNewtonOptimizer(100, 1e-6)
+	@testset "create_jump_model" begin
+		for dim in TEST_DIMENSIONS
+			problem = create_test_optimal_control_problem()
+			mesh, _ = create_test_mesh(dim)
 
-            solution = solve_optimal_control_problem(problem, solver)
+			A = create_spd_matrix(problem.num_vars)
+			b = randn(problem.num_vars)
 
-            @test solution isa OptimizationSolution
-            @test size(solution.state) == (1, 101)  # Assuming 100 time steps
-            @test size(solution.control) == (1, 101)
-            @test solution.state[1, 1] ≈ 1.0
-            @test solution.state[1, end] < 0.1  # Should decrease significantly
-            @test all(solution.control .>= -Inf) && all(solution.control .<= Inf)
-        end
-    end
+			model = Optimization.create_jump_model(A, b, problem, mesh)
 
-    @testset "JuMP Integration" begin
-        @testset "create_jump_model" begin
-            problem = KSOptimalControlProblem{Float64}(
-                (x, u, t) -> -x + u,
-                (x, u) -> x^2 + u^2,
-                x -> 0.0,
-                [1.0],
-                (0.0, 1.0),
-                [(-1.0, 1.0)]
-            )
+			@test model isa JuMP.Model
+			@test num_variables(model) ==
+				problem.num_vars * problem.num_time_steps +
+				  problem.num_controls * (problem.num_time_steps - 1)
+			@test num_constraints(model) ==
+				problem.num_vars * (problem.num_time_steps - 1) + problem.num_vars  # dynamics constraints + initial conditions
+		end
+	end
 
-            model = create_jump_model(problem)
+	@testset "extract_solution" begin
+		problem = create_test_optimal_control_problem()
 
-            @test model isa JuMP.Model
-            @test num_variables(model) == 202  # 101 each for state and control
-            @test num_constraints(model) == 301  # 100 dynamics constraints, 201 bound constraints
+		# Create a mock JuMP model and optimize it
+		model = Model(Ipopt.Optimizer)
+		@variable(model, x[1:(problem.num_vars), 1:(problem.num_time_steps)])
+		@variable(model, u[1:(problem.num_controls), 1:(problem.num_time_steps - 1)])
+		@constraint(model, x[:, 1] .== problem.initial_state)
+		@objective(model,
+			Min,
+			sum(x[i, j]^2
+				for i in 1:(problem.num_vars), j in 1:(problem.num_time_steps)) + sum(
+				u[i, j]^2
+				for i in 1:(problem.num_controls), j in 1:(problem.num_time_steps - 1)
+			))
+		optimize!(model)
 
-            # Test if the model can be solved
-            set_optimizer(model, Ipopt.Optimizer)
-            optimize!(model)
-            @test termination_status(model) == MOI.LOCALLY_SOLVED
-        end
-    end
+		solution = Optimization.extract_solution(model, problem)
 
-    @testset "Solution Extraction" begin
-        @testset "extract_solution" begin
-            problem = KSOptimalControlProblem{Float64}(
-                (x, u, t) -> -x + u,
-                (x, u) -> x^2 + u^2,
-                x -> 0.0,
-                [1.0],
-                (0.0, 1.0),
-                [(-1.0, 1.0)]
-            )
-            model = create_jump_model(problem)
-            set_optimizer(model, Ipopt.Optimizer)
-            optimize!(model)
+		@test size(solution.state) == (problem.num_vars, problem.num_time_steps)
+		@test size(solution.control) == (problem.num_controls, problem.num_time_steps - 1)
+		@test solution.state[:, 1] ≈ problem.initial_state
+		@test solution.objective >= 0
+	end
 
-            solution = extract_solution(model, problem)
+	@testset "discretize_and_optimize" begin
+		for dim in TEST_DIMENSIONS
+			problem = create_test_problem(dim, KSDirichletBC)
+			num_elements = ntuple(_ -> 10, dim)
+			tspan = (0.0, 1.0)
+			degree = 3
+			solver_options = create_test_solver_options()
 
-            @test solution isa OptimizationSolution
-            @test size(solution.state) == (1, 101)
-            @test size(solution.control) == (1, 101)
-            @test solution.objective > 0
-            @test solution.state[1, 1] ≈ 1.0
-            @test all(-1.0 .<= solution.control .<= 1.0)
-        end
-    end
+			model, solution = Optimization.discretize_and_optimize(
+				problem,
+				num_elements,
+				tspan,
+				degree,
+				solver_options,
+			)
+
+			@test model isa JuMP.Model
+			@test size(solution, 2) == solver_options.num_steps + 1
+			@test size(solution, 1) == prod(num_elements .+ 1)
+		end
+	end
+
+	@testset "solve_pde_constrained_optimization" begin
+		for dim in TEST_DIMENSIONS
+			pde_problem = create_test_problem(dim, KSDirichletBC)
+			objective_function = (u, c) -> sum(u .^ 2) + sum(c .^ 2)
+			control_bounds = [(-1.0, 1.0) for _ in 1:dim]
+			mesh, _ = create_test_mesh(dim)
+
+			solution = Optimization.solve_pde_constrained_optimization(
+				pde_problem,
+				objective_function,
+				control_bounds,
+				mesh,
+			)
+
+			@test length(solution.state) > 0
+			@test length(solution.control) == length(control_bounds)
+			@test all(
+				all(control_bounds[i][1] .<= solution.control[i] .<= control_bounds[i][2])
+				for i in eachindex(control_bounds)
+			)
+			@test solution.objective >= 0
+		end
+	end
+
+	@testset "Error handling" begin
+		@testset "Invalid control bounds" begin
+			problem = create_test_optimal_control_problem(; control_bounds = [(1.0, -1.0)])
+			mesh, _ = create_test_mesh(1)
+			A = create_spd_matrix(problem.num_vars)
+			b = randn(problem.num_vars)
+
+			@test_throws ArgumentError Optimization.solve_optimal_control_problem(
+				A,
+				b,
+				problem,
+				mesh,
+			)
+		end
+
+		@testset "Invalid time span" begin
+			problem = create_test_optimal_control_problem(; time_span = (1.0, 0.0))
+			mesh, _ = create_test_mesh(1)
+			A = create_spd_matrix(problem.num_vars)
+			b = randn(problem.num_vars)
+
+			@test_throws ArgumentError Optimization.solve_optimal_control_problem(
+				A,
+				b,
+				problem,
+				mesh,
+			)
+		end
+
+		@testset "Inconsistent dimensions" begin
+			problem = create_test_optimal_control_problem()
+			mesh, _ = create_test_mesh(1)
+			A = create_spd_matrix(problem.num_vars + 1)  # Inconsistent dimension
+			b = randn(problem.num_vars)
+
+			@test_throws DimensionMismatch Optimization.solve_optimal_control_problem(
+				A,
+				b,
+				problem,
+				mesh,
+			)
+		end
+	end
+
+	@testset "Performance" begin
+		@testset "Large-scale problem" begin
+			N = 1000
+			problem = create_test_optimal_control_problem(;
+				num_vars = N,
+				num_controls = 1,
+				num_time_steps = 100,
+			)
+			mesh, _ = create_test_mesh(1, (N,))
+			A = create_sparse_matrix(N, 0.01)
+			b = randn(N)
+
+			time_taken = @elapsed solution = Optimization.solve_optimal_control_problem(
+				A, b, problem, mesh)
+
+			@test time_taken < 60.0  # Adjust this threshold as needed
+			@test size(solution.state, 1) == N
+			@test size(solution.control, 1) == 1
+		end
+	end
+
+	@testset "Nonlinear optimization" begin
+		problem = create_test_optimal_control_problem(;
+			state_equations = [x -> [x[2], -sin(x[1]) + u[1]] for u in 1:1],
+			cost_functions = [(x, u) -> x[1]^2 + x[2]^2 + u[1]^2],
+			terminal_cost = x -> x[1]^2 + x[2]^2,
+			initial_state = [π, 0.0],
+			time_span = (0.0, 10.0),
+			control_bounds = [(-2.0, 2.0)],
+			num_vars = 2,
+			num_controls = 1,
+			num_time_steps = 101,
+		)
+		mesh, _ = create_test_mesh(1, (2,))
+		A = create_spd_matrix(2)
+		b = randn(2)
+
+		solution = Optimization.solve_optimal_control_problem(A, b, problem, mesh)
+
+		@test size(solution.state, 1) == 2
+		@test size(solution.control, 1) == 1
+		@test solution.state[:, end] ≈ [0.0, 0.0] atol = 1e-2  # Should approach origin
+		@test solution.objective >= 0
+	end
 end

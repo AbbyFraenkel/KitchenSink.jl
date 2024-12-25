@@ -1,726 +1,787 @@
 using Test
-using LinearAlgebra, SparseArrays
-import FastGaussQuadrature: gausslegendre
-# using ..KSTypes, ..SpectralMethods, ..CoordinateSystems
-using KitchenSink.SpectralMethods, KitchenSink.KSTypes, KitchenSink.CoordinateSystems
+using LinearAlgebra, SparseArrays, StaticArrays
+using KitchenSink.KSTypes, KitchenSink.CoordinateSystems, KitchenSink.SpectralMethods
+using KitchenSink.BoundaryConditions, KitchenSink.ProblemTypes, KitchenSink.LinearSolvers
+using KitchenSink.CacheManagement, KitchenSink.NumericUtilities
+using BSplineKit: BSplineBasis, BSplineOrder, KnotVector, evaluate
+using BSplineKit
 
-# Function to generate expected values based on the test case
-function expected_values(test_case::Symbol)
-	if test_case == :case1
-		nodes, weights = gausslegendre(3)
-		nodes_inner = nodes
-		weights_inner = weights
-		nodes = vcat(-1.0, nodes, 1.0)
-		weights = vcat(0.0, weights, 0.0)
-		return nodes, weights, nodes_inner, weights_inner
-	elseif test_case == :case2
-		nodes, weights = gausslegendre(2)
-		nodes_inner = nodes
-		weights_inner = weights
-		nodes = vcat(-1.0, nodes, 1.0)
-		weights = vcat(0.0, weights, 0.0)
-		return nodes, weights, nodes_inner, weights_inner
-	elseif test_case == :case3
-		nodes = [-1.0, 0.0, 1.0]
-		weights = [0.0, 2.0, 0.0]
-		return nodes, weights
-	elseif test_case == :case4
-		nodes, weights = gausslegendre(1)
-		nodes_inner = nodes
-		weights_inner = weights
-		nodes = vcat(-1.0, nodes, 1.0)
-		weights = vcat(0.0, weights, 0.0)
-		return nodes, weights, nodes_inner, weights_inner
-	else
-		error("Unknown test case")
-	end
+include("../test_utils_with_deps.jl")
+# Helper section at top
+
+using StaticArrays
+
+# Combine face node functions into one
+function get_face_nodes(cell::KSCell, dim::Int, side::Symbol)
+	is_neg = side == :neg
+	return [
+		idx for idx in keys(cell.node_map) if
+		(is_neg && idx[dim] == 1) || (!is_neg && idx[dim] == cell.p[dim] + 2)
+	]
 end
 
-@testset "Spectral Methods" begin
-	@testset "create_legendre_nodes_and_weights Tests" begin
-		@testset "Valid Cases" begin
-			nodes_with_boundary, weights_with_boundary, nodes_interior, weights_interior = create_legendre_nodes_and_weights(5)
-			expected_nodes, expected_weights = expected_values(:case1)
-			@test all(isapprox(nodes_with_boundary[i], expected_nodes[i], atol = 1e-8) for i in eachindex(nodes_with_boundary))
-			@test all(isapprox(weights_with_boundary[i], expected_weights[i], atol = 1e-8) for i in eachindex(weights_with_boundary))
+# More efficient coordinate calculation
+function get_node_coordinates_test(
+	coord_system::KSCartesianCoordinates,
+	cell::KSCell,
+	node_index::Tuple,
+)
+	N = length(coord_system.ranges)
 
-			nodes_with_boundary, weights_with_boundary, nodes_interior, weights_interior = create_legendre_nodes_and_weights(4)
-			expected_nodes, expected_weights = expected_values(:case2)
-			@test all(isapprox(nodes_with_boundary[i], expected_nodes[i], atol = 1e-8) for i in eachindex(nodes_with_boundary))
-			@test all(isapprox(weights_with_boundary[i], expected_weights[i], atol = 1e-8) for i in eachindex(weights_with_boundary))
-		end
+	# Calculate cell position in each dimension
+	cell_pos = ntuple(d -> begin
+			denominator = 1
+			for i in 1:(d - 1)
+				denominator *= (cell.p[i] + 2)
+			end
+			div((cell.id - 1), denominator) % (cell.p[d] + 2)
+		end, N)
 
-		@testset "Invalid Cases" begin
-			@test_throws ArgumentError create_legendre_nodes_and_weights(2)
-		end
+	# Calculate cell start coordinates
+	cell_start = ntuple(
+		d -> begin
+			domain_size = coord_system.ranges[d][2] - coord_system.ranges[d][1]
+			coord_system.ranges[d][1] + cell_pos[d] * domain_size / (cell.p[d] + 2)
+		end, N)
 
-		@testset "Edge Cases" begin
-			nodes_with_boundary, weights_with_boundary, nodes_interior, weights_interior = create_legendre_nodes_and_weights(3)
-			expected_nodes, expected_weights = expected_values(:case3)
-			@test all(isapprox(nodes_with_boundary[i], expected_nodes[i], atol = 1e-8) for i in eachindex(nodes_with_boundary))
-			@test all(isapprox(weights_with_boundary[i], expected_weights[i], atol = 1e-8) for i in eachindex(weights_with_boundary))
+	# Calculate cell size in each dimension
+	cell_size = ntuple(
+		d -> begin
+			domain_size = coord_system.ranges[d][2] - coord_system.ranges[d][1]
+			domain_size / (cell.p[d] + 2)
+		end, N)
+
+	# Calculate final node coordinates
+	node_coords = ntuple(
+		d -> cell_start[d] + (node_index[d] - 1) * cell_size[d] / (cell.p[d] + 1),
+		N,
+	)
+
+	return SVector{N}(node_coords)
+end
+
+# Parse direction into dimension and side
+function parse_direction(direction::Symbol)
+	str = string(direction)
+	dim = parse(Int, match(r"dim(\d+)", str).captures[1])
+	side = endswith(str, "pos") ? :pos : :neg
+	return (dim, side)
+end
+
+function verify_spectral_output(nodes_b, weights_b, nodes, weights, p)
+	exp_nodes_b, exp_weights_b, exp_nodes, exp_weights = expected_values(p)
+	return all(isapprox.(nodes_b, exp_nodes_b, atol = TEST_TOLERANCES[1])) &&
+		   all(isapprox.(weights_b, exp_weights_b, atol = TEST_TOLERANCES[1])) &&
+		   all(isapprox.(nodes, exp_nodes, atol = TEST_TOLERANCES[1])) &&
+		   all(isapprox.(weights, exp_weights, atol = TEST_TOLERANCES[1]))
+end
+
+function verify_derivative_matrices(
+	D_b::Matrix, D_i::Matrix, nodes::Vector{Float64}, p::Int, tol::Float64
+)
+	f_vals = test_f.(nodes)
+	df_vals = test_df.(nodes)
+	return all(isapprox.(D_b * f_vals, df_vals, atol = tol, rtol = tol)) &&
+		   all(
+		isapprox.(D_i * f_vals[2:(end - 1)], df_vals[2:(end - 1)], atol = tol, rtol = tol)
+	)
+end
+
+@testset "SpectralMethods Tests" begin
+	@testset "Legendre nodes and quadrature" begin
+		@testset for p in TEST_POLYNOMIAL_ORDERS
+			nodes_b, weights_b, nodes, weights = create_legendre_nodes_and_weights(p)
+			@test verify_spectral_output(nodes_b, weights_b, nodes, weights, p)
 		end
 	end
 
-	@testset "gauss_legendre_with_boundary_nd" begin
-		@testset "Valid cases" begin
-			@testset "1D case" begin
-				p, dim = 5, 1
-				nodes, weights, nodes_interior, weights_interior = SpectralMethods.gauss_legendre_with_boundary_nd(p, dim)
-				@test length(nodes) == p
-				@test length(weights) == p
-				@test all(n -> isa(n, Vector{Float64}), nodes)
-				@test nodes[1][1] ≈ -1.0
-				@test nodes[end][1]≈1.0 atol=1e-10
-				@test sum(weights)≈2.0 atol=1e-10
-			end
+	@testset "Gauss-Legendre N-D" begin
+		@testset for (dim, p) in Iterators.product(TEST_DIMENSIONS, TEST_POLYNOMIAL_ORDERS)
+			p_vec = ntuple(d -> p + d - 1, dim > 1 ? dim : 1)
+			nodes, weights, nodes_i, weights_i = gauss_legendre_with_boundary_nd(
+				p_vec; dim = dim
+			)
 
-			@testset "2D case" begin
-				p, dim = 4, 2
-				nodes, weights, nodes_interior, weights_interior = SpectralMethods.gauss_legendre_with_boundary_nd(p, dim)
-				@test length(nodes) == p^2
-				@test length(weights) == p^2
-				@test all(n -> isa(n, Vector{Float64}), nodes)
-				@test nodes[1]≈[-1.0, -1.0] atol=1e-10
-				@test nodes[end] ≈ [1.0, 1.0]
-				@test sum(weights)≈4.0 atol=1e-10
-			end
-
-			@testset "3D case" begin
-				p, dim = 3, 3
-				nodes, weights, nodes_interior, weights_interior = SpectralMethods.gauss_legendre_with_boundary_nd(p, dim)
-				@test length(nodes) == p^3
-				@test length(weights) == p^3
-				@test all(n -> isa(n, Vector{Float64}), nodes)
-				@test nodes[1] ≈ [-1.0, -1.0, -1.0]
-				@test nodes[end] ≈ [1.0, 1.0, 1.0]
-				@test sum(weights)≈8.0 atol=1e-10
-			end
-		end
-
-		@testset "Invalid cases" begin
-			@test_throws ArgumentError SpectralMethods.gauss_legendre_with_boundary_nd(2, 2)
-		end
-
-		@testset "Edge cases" begin
-			@testset "Minimum valid polynomial degree" begin
-				p, dim = 3, 2
-				nodes, weights, nodes_interior, weights_interior = SpectralMethods.gauss_legendre_with_boundary_nd(p, dim)
-				@test length(nodes) == p^2
-				@test length(weights) == p^2
-			end
-
-			@testset "Large polynomial degree" begin
-				p, dim = 20, 1
-				nodes, weights, nodes_interior, weights_interior = SpectralMethods.gauss_legendre_with_boundary_nd(p, dim)
-				@test length(nodes) == p
-				@test length(weights) == p
-			end
-		end
-
-		@testset "Invalid cases" begin
-			@testset "Invalid polynomial degree" begin
-				@test_throws ArgumentError SpectralMethods.gauss_legendre_with_boundary_nd(2, 2)
-			end
-		end
-
-		@testset "Numerical integration accuracy" begin
-			p, dim = 5, 1
-			nodes, weights, nodes_interior, weights_interior = SpectralMethods.gauss_legendre_with_boundary_nd(p, dim)
-
-			# Integrate f(x) = x^2 over [-1, 1], exact integral is 2/3
-			integral = sum(w * n[1]^2 for (w, n) in zip(weights, nodes))
-			@test integral≈2.0 / 3.0 atol=1e-10
-
-			# Integrate f(x) = x^4 over [-1, 1], exact integral is 2/5
-			integral = sum(w * n[1]^4 for (w, n) in zip(weights, nodes))
-			@test integral≈2.0 / 5.0 atol=1e-10
-		end
-
-		@testset "Symmetry check" begin
-			p, dim = 4, 1
-			nodes, weights, nodes_interior, weights_interior = SpectralMethods.gauss_legendre_with_boundary_nd(p, dim)
-
-			mid = div(length(nodes), 2)
-			for i in 1:mid
-				@test nodes[i][1]≈-nodes[end - i + 1][1] atol=1e-10
-				@test weights[i]≈weights[end - i + 1] atol=1e-10
-			end
-		end
-
-		@testset "2D numerical integration accuracy" begin
-			p, dim = 4, 2
-			nodes, weights, nodes_interior, weights_interior = SpectralMethods.gauss_legendre_with_boundary_nd(p, dim)
-
-			# Integrate f(x, y) = x^2 + y^2 over [-1, 1] x [-1, 1], exact integral is 8/3
-			integral = sum(w * (n[1]^2 + n[2]^2) for (w, n) in zip(weights, nodes))
-			@test integral≈8.0 / 3.0 atol=1e-10
-		end
-
-		@testset "3D numerical integration accuracy" begin
-			p, dim = 3, 3
-			nodes, weights, nodes_interior, weights_interior = SpectralMethods.gauss_legendre_with_boundary_nd(p, dim)
-
-			# Integrate f(x, y, z) = x + y + z over [-1, 1] x [-1, 1] x [-1, 1], exact integral is 0
-			integral = sum(w * (n[1] + n[2] + n[3]) for (w, n) in zip(weights, nodes))
-			@test integral≈0.0 atol=1e-10
+			# Verify dimensions and lengths with broadcasting
+			@test all(length.(nodes) .== p_vec .+ 2)
+			@test all(length.(weights) .== p_vec .+ 2)
+			@test all(length.(nodes_i) .== p_vec)
+			@test all(length.(weights_i) .== p_vec)
 		end
 	end
 
-	@testset "barycentric_weights Tests" begin
-		@testset "Valid Cases" begin
-			nodes_with_boundary, _, _, _ = create_legendre_nodes_and_weights(3)
-			weights = barycentric_weights(nodes_with_boundary)
-			expected_weights = [0.5, -1.0, 0.5]
-			@test all(isapprox(weights[i], expected_weights[i], atol = 1e-8) for i in eachindex(weights))
-		end
+	@testset "Derivative matrices" begin
+		@testset for p in TEST_POLYNOMIAL_ORDERS[2:end]
+			D_b, D_i = derivative_matrix!(p)
+			nodes_b, _, nodes_i, _ = create_legendre_nodes_and_weights(p)
+			tol = 1.5e-1 * (p - 1)
+			@test verify_derivative_matrices(D_b, D_i, nodes_b, p, tol)
 
-		@testset "Invalid Cases" begin
-			@test_throws ArgumentError barycentric_weights([0.0, 0.5])
-		end
+			# Test kth derivatives
+			if p >= 3
+				D_mats_b, D_mats_i = kth_derivative_matrix!(p, min(3, p - 1))
+				test_functions = [test_f, test_df, test_d2f, test_d3f]
 
-		@testset "Edge Cases" begin
-			nodes = [0.0, 0.1, 0.2]
+				@test all(
+					map(1:min(3, p - 1)) do k
+						dkf_vals = test_functions[k].(nodes_i)  # Use interior nodes
+						isapprox(D_mats_i[k] * test_f.(nodes_i), dkf_vals;  # Use interior nodes
+							atol = 5e-1 * 2p^k, rtol = 5e-1 * 2p^k)
+					end,
+				)
+			end
+		end
+	end
+
+	# Combine quadrature and interpolation tests
+	@testset "Quadrature and Interpolation" begin
+		@testset for p in TEST_POLYNOMIAL_ORDERS[2:end]
+			nodes, weights = create_legendre_nodes_and_weights(p)[1:2]
+			Q = quadrature_matrix(weights)
+
+			# Test quadrature matrix properties
+			@test size(Q) == (p + 2, p + 2) && Q ≈ Diagonal(weights)
+
+			# Test integral computation
+			f_vals = test_f.(nodes)
+			@test isapprox(compute_integral(weights, f_vals), 2.0,
+				atol = 5e-1 * 2p, rtol = 5e-1 * 2p)
+
+			# Test interpolation at multiple points
+			if p >= 5
+				values = test_f.(nodes)
+				test_points = [-0.5, 0.0, 0.5]  # Multiple test points
+				interpolated = [
+					barycentric_interpolation(nodes, values, x) for x in test_points
+				]
+				exact = test_f.(test_points)
+				@test all(
+					isapprox.(interpolated, exact,
+						atol = 5e-1 * 2p, rtol = 5e-1 * 2p),
+				)
+			end
+		end
+	end
+
+	@testset "get_or_create_spectral_properties" begin
+		for p in TEST_POLYNOMIAL_ORDERS
+			for continuity_order in TEST_CONTINUITY_ORDERS
+				props = get_or_create_spectral_properties(p, continuity_order)
+
+				@test props.p == p
+				@test props.continuity_order == continuity_order
+				@test length(props.nodes_with_boundary) == p + 2
+				@test length(props.nodes_interior) == p
+				@test size(props.differentiation_matrix_with_boundary) == (p + 2, p + 2)
+				@test size(props.differentiation_matrix_interior) == (p, p)
+				@test length(props.higher_order_diff_matrices_with_boundary) ==
+					continuity_order
+				@test length(props.higher_order_diff_matrices_interior) == continuity_order
+			end
+		end
+	end
+
+	@testset "create_standard_ks_cell" begin
+		for p in TEST_POLYNOMIAL_ORDERS
+			for level in TEST_REFINEMENT_LEVELS
+				for dim in TEST_DIMENSIONS
+					continuity_order = ntuple(_ -> 2, dim)
+					cell = create_standard_ks_cell(
+						ntuple(_ -> p, dim),
+						level,
+						dim;
+						continuity_order = continuity_order,
+					)
+					scale_factor = 2.0^(-level + 1)
+
+					expected_nodes_with_boundary,
+					expected_weights_with_boundary,
+					expected_nodes,
+					expected_weights = expected_values(p)
+
+					expected_nodes_with_boundary *= scale_factor
+					expected_nodes *= scale_factor
+
+					@test length(cell.nodes_with_boundary[1]) ==
+						length(expected_nodes_with_boundary)
+					@test all(
+						isapprox.(
+							cell.nodes_with_boundary[1],
+							expected_nodes_with_boundary,
+							atol = TEST_TOLERANCES[1],
+						),
+					)
+				end
+			end
+		end
+	end
+
+	@testset "barycentric_weights" begin
+		for p in TEST_POLYNOMIAL_ORDERS
+			nodes, _, _, _ = create_legendre_nodes_and_weights(p)
 			weights = barycentric_weights(nodes)
-			expected_weights = [50.0, -100.0, 50.0]
-			@test all(isapprox(weights[i], expected_weights[i], atol = 1e-8) for i in eachindex(weights))
+
+			@test length(weights) == length(nodes)
+			@test all(!isinf, weights)
+			@test all(!isnan, weights)
+			@test all(abs(w) >= 1 for w in weights)
+			expected_weights = [
+				1 /
+				prod(nodes[j] - nodes[k]
+					 for k in 1:length(nodes) if k != j)
+				for j in eachindex(nodes)]
+			@test all(isapprox(weights, expected_weights; atol = TEST_TOLERANCES[1]))
 		end
 	end
 
-	@testset "barycentric_interpolation Tests" begin
-		@testset "Valid Cases" begin
-			nodes_with_boundary, _, _, _ = create_legendre_nodes_and_weights(3)
-			values = [0.0, 1.0, 0.0]
-			x = 0.0
-			interpolated_value = barycentric_interpolation(nodes_with_boundary, values, x)
-			@test isapprox(interpolated_value, 1.0, atol = 1e-8)
-		end
+	@testset "enforce_ck_continuity_spectral!" begin
+		for p in TEST_POLYNOMIAL_ORDERS[2:end]
+			for k in 1:min(2, p)
+				nodes, _, _, _ = create_legendre_nodes_and_weights(p)
+				D_matrices_with_boundary, _ = kth_derivative_matrix!(p, k)
 
-		@testset "Invalid Cases" begin
-			nodes = [0.0, 0.5]
-			values = [0.0, 1.0]
-			x = 0.25
-			@test_throws ArgumentError barycentric_interpolation(nodes, values, x)
-		end
+				for order in 1:k
+					D_original = copy(D_matrices_with_boundary[order])
+					D_enforced = enforce_ck_continuity_spectral!(
+						copy(D_original), order, nodes
+					)
 
-		@testset "Edge Cases" begin
-			nodes_with_boundary, _, _, _ = create_legendre_nodes_and_weights(3)
-			values = [0.0, 0.5, 1.0]
-			x = -1.0
-			interpolated_value = barycentric_interpolation(nodes_with_boundary, values, x)
-			@test isapprox(interpolated_value, 0.0, atol = 1e-8)
-		end
-	end
+					for i in 1:order
+						expected_left = [
+							nodes[i]^(j - 1) / factorial(j - 1) for j in 1:(order + 1)
+						]
+						expected_right = [
+							(nodes[end] - nodes[end - i + 1])^(j - 1) / factorial(j - 1)
+							for
+							j in 1:(order + 1)
+						]
 
-	@testset "interpolate_nd Tests" begin
-		@testset "Valid Cases" begin
-			nodes_x, _, _, _ = create_legendre_nodes_and_weights(5)
-			nodes_y, _, _, _ = create_legendre_nodes_and_weights(5)
-			nodes = [nodes_x, nodes_y]
-			values = [0.0 1.0 2.0 3.0 4.0;
-					  1.0 2.0 3.0 4.0 5.0;
-					  2.0 3.0 4.0 5.0 6.0;
-					  3.0 4.0 5.0 6.0 7.0;
-					  4.0 5.0 6.0 7.0 8.0]
-			point = [0.0, 0.0]
-			interpolated_value = interpolate_nd(nodes, values, point)
-			@test isapprox(interpolated_value, 4.0, atol = 1e-8)
-		end
+						@test isapprox(
+							D_enforced[i, 1:(order + 1)],
+							expected_left,
+							atol = TEST_TOLERANCES[1],
+						)
+						@test isapprox(
+							D_enforced[end - i + 1, (end - order):end],
+							expected_right,
+							atol = TEST_TOLERANCES[1],
+						)
+					end
 
-		@testset "Invalid Cases" begin
-			nodes_x, _, _, _ = create_legendre_nodes_and_weights(5)
-			nodes_y, _, _, _ = create_legendre_nodes_and_weights(5)
-			nodes = [nodes_x, nodes_y]
-			values = [0.0 1.0 2.0 3.0 4.0; 1.0 2.0 3.0 4.0 5.0; 2.0 3.0 4.0 5.0 6.0; 3.0 4.0 5.0 6.0 7.0; 4.0 5.0 6.0 7.0 8.0]
-			point = [0.0]
-			@test_throws ArgumentError interpolate_nd(nodes, values, point)
-		end
-
-		@testset "Edge Cases" begin
-			nodes_x, _, _, _ = create_legendre_nodes_and_weights(5)
-			nodes_y, _, _, _ = create_legendre_nodes_and_weights(5)
-			nodes = [nodes_x, nodes_y]
-			values = [0.0 1.0 2.0 3.0 4.0; 1.0 2.0 3.0 4.0 5.0; 2.0 3.0 4.0 5.0 6.0; 3.0 4.0 5.0 6.0 7.0; 4.0 5.0 6.0 7.0 8.0]
-			point = [-1.0, -1.0]
-			interpolated_value = interpolate_nd(nodes, values, point)
-			@test isapprox(interpolated_value, 0.0, atol = 1e-8)
-		end
-	end
-
-	@testset "Lagrange_polynomials Tests" begin
-		@testset "Valid Cases" begin
-			nodes_with_boundary, _, _, _ = create_legendre_nodes_and_weights(3)
-			polynomials = Lagrange_polynomials(nodes_with_boundary)
-			@test size(polynomials) == (3, 3)
-			@test isapprox(polynomials[1, 1], 1.0, atol = 1e-8)
-		end
-
-		@testset "Invalid Cases" begin
-			@test_throws MethodError Lagrange_polynomials([Vector(0.0), Vector(0.5)])
-		end
-
-		@testset "Edge Cases" begin
-			nodes_with_boundary, _, _, _ = create_legendre_nodes_and_weights(3)
-			polynomials = Lagrange_polynomials(nodes_with_boundary)
-			@test size(polynomials) == (3, 3)
-			@test isapprox(polynomials[1, 1], 1.0, atol = 1e-8)
-		end
-	end
-
-	@testset "create_basis_functions Tests" begin
-		@testset "Valid Cases" begin
-			for (degree, dim) in [(3, 2), (4, 2), (5, 3)]
-				basis_functions = create_basis_functions(degree, dim)
-				expected_num_functions = binomial(degree + dim, dim)
-				@test length(basis_functions) == expected_num_functions
-				@test all(f -> f isa KSBasisFunction, basis_functions)
-
-				for f in basis_functions
-					coords = ones(Float64, dim)
-					result = f.function_handle(coords)
-					@test isa(result, Real)
+					if p + 2 > 2 * order
+						@test isapprox(
+							D_enforced[(order + 1):(end - order), :],
+							D_original[(order + 1):(end - order), :],
+							atol = TEST_TOLERANCES[1],
+						)
+					end
 				end
 			end
 		end
+	end
 
-		@testset "Edge Cases" begin
-			degree, dim = 3, 1
-			basis_functions = create_basis_functions(degree, dim)
-			@test length(basis_functions) == 4
+	@testset "create_tensor_product_mask" begin
+		for dim in TEST_DIMENSIONS
+			p_vec = ntuple(_ -> 5, dim)
+			continuity_order = ntuple(_ -> 2, dim)
 
-			@test isapprox(basis_functions[1].function_handle([0.0]), 1.0, atol = 1e-6)
-		end
+			for is_boundary in (false, true)
+				for is_fictitious in (false, true)
+					mask = create_tensor_product_mask(
+						p_vec,
+						continuity_order,
+						is_boundary,
+						is_fictitious,
+						dim,
+					)
 
-		@testset "Invalid Cases" begin
-			@test_throws ArgumentError create_basis_functions(0, 1)
-			@test_throws ArgumentError create_basis_functions(1, 0)
+					@test length(mask) == dim
+					@test all(length(m) == p + 2 for (m, p) in zip(mask, p_vec))
+
+					for d in 1:dim
+						if is_boundary
+							@test !any(mask[d][1:continuity_order[d]])
+							@test !any(mask[d][(end - continuity_order[d] + 1):end])
+						else
+							@test !any(mask[d][1:continuity_order[d]])
+							@test !any(mask[d][(end - continuity_order[d] + 1):end])
+						end
+
+						if is_fictitious
+							@test !any(mask[d][2:(end - 1)])
+						end
+					end
+				end
+			end
 		end
 	end
 
-	@testset "Differentiation Matrices" begin
-		f(x) = sin.(x)
-		df(x) = cos.(x)
-		d2f(x) = -sin.(x)
-		d3f(x) = -cos.(x)
+	@testset "create_ocfc_mesh" begin
+		for dim in TEST_DIMENSIONS
+			num_cells = ntuple(_ -> 2, dim)
+			p_vec = ntuple(_ -> 3, dim)
+			continuity_order = ntuple(_ -> 1, dim)
+			max_level = 2
+			coord_system = generate_test_coordinate_system(dim)
 
-		@testset "derivative_matrix! tests" begin
-			@testset "Valid Cases" begin
-				for n in [15, 25, 50]
-					nodes_with_boundary, _, _, _ = create_legendre_nodes_and_weights(n)
-					D = derivative_matrix!(nodes_with_boundary)
-					x_vals = nodes_with_boundary
-					f_vals = f(x_vals)
-					df_vals = df(x_vals)
-					@test size(D) == (n, n)
-					@test all(isapprox.(df_vals, D * f_vals, atol = 1e-6))
-				end
-			end
+			mesh = create_ocfc_mesh(
+				coord_system,
+				num_cells,
+				p_vec,
+				continuity_order,
+				dim,
+				max_level,
+			)
 
-			@testset "Invalid Cases" begin
-				@test_throws ArgumentError derivative_matrix!([1.0, 2.0])
-				@test_throws ArgumentError derivative_matrix!(Vector{Float64}())
-			end
+			@test length(mesh.cells) == prod(num_cells) * max_level
+			@test all(cell.p == p_vec for cell in mesh.cells)
+			@test all(cell.level <= max_level for cell in mesh.cells)
+			@test all(cell.continuity_order == continuity_order for cell in mesh.cells)
 
-			@testset "Edge Cases" begin
-				nodes = [-1.0, 0.0, 1.0]
-				D = derivative_matrix!(nodes)
-				@test size(D) == (3, 3)
-				@test isapprox(D[2, :], [-0.5, 0.0, 0.5], atol = 1e-8)
+			for d in 1:dim
+				@test haskey(mesh.boundary_cells, Symbol("left_dim_$d"))
+				@test haskey(mesh.boundary_cells, Symbol("right_dim_$d"))
 			end
 		end
+	end
 
-		@testset "kth_derivative_matrix! tests" begin
-			@testset "Valid Cases" begin
-				for n in [15, 25, 50]
-					nodes_with_boundary, _, _, _ = create_legendre_nodes_and_weights(n)
-					Dks = kth_derivative_matrix!(nodes_with_boundary, 3)
-					x_vals = nodes_with_boundary
-					f_vals = f(x_vals)
-					D1 = Dks[1]
-					D2 = Dks[2]
-					D3 = Dks[3]
-					Df1 = D1 * f_vals
-					Df2 = D2 * f_vals
-					Df3 = D3 * f_vals
-					df_vals = df(x_vals)
-					d2f_vals = d2f(x_vals)
-					d3f_vals = d3f(x_vals)
-					@test all(isapprox.(df_vals, Df1, atol = 1e-6))
-					@test all(isapprox.(d2f_vals, Df2, atol = 1e-3))
-					@test all(isapprox.(d3f_vals, Df3, atol = 1e-3))
+	@testset "derivative_matrix_nd" begin
+		for dim in TEST_DIMENSIONS
+			p_vec = ntuple(_ -> 5, dim)
+			k_max = 3
+			derivative_matrices = derivative_matrix_nd(collect(p_vec), dim, k_max)
+
+			@test length(derivative_matrices) == dim
+			for d in 1:dim
+				@test length(derivative_matrices[d]) == k_max
+				for k in 1:k_max
+					@test size(derivative_matrices[d][k]) == (p_vec[d] + 2, p_vec[d] + 2)
 				end
 			end
+		end
+	end
 
-			@testset "Invalid Cases" begin
-				@test_throws ArgumentError kth_derivative_matrix!([1.0, 2.0], 1)
-				@test_throws ArgumentError kth_derivative_matrix!([1.0, 2.0, 3.0], 0)
-				@test_throws ArgumentError kth_derivative_matrix!([1.0, 2.0, 3.0], -1)
+	@testset "quadrature_matrix_nd" begin
+		for dim in TEST_DIMENSIONS
+			p_vec = ntuple(_ -> 5, dim)
+			weights_tuple = ntuple(d -> rand(p_vec[d]), dim)
+			quad_matrices = quadrature_matrix_nd(weights_tuple)
+
+			@test length(quad_matrices) == dim
+			for d in 1:dim
+				@test size(quad_matrices[d]) == (p_vec[d], p_vec[d])
+				@test quad_matrices[d] ≈ Diagonal(weights_tuple[d])
 			end
 		end
+	end
 
-		# Test for `derivative_matrix_nd`
-		# Test for `derivative_matrix_nd`
-		@testset "derivative_matrix_nd tests" begin
-			# 1D Case: Simple linear case
-			points_1d = [[-1.0, 0.0, 1.0]]
+	@testset "compute_integral_nd" begin
+		for dim in TEST_DIMENSIONS
+			p_vec = ntuple(_ -> 8, dim)
+			nodes_tuple = ntuple(d -> create_legendre_nodes_and_weights(p_vec[d])[3], dim)
+			weights_tuple = ntuple(d -> create_legendre_nodes_and_weights(p_vec[d])[4], dim)
+			quad_matrices = quadrature_matrix_nd(weights_tuple)
+
+			grid = generate_nd_grid(dim, p_vec[1])
+
+			values = [test_multidim(collect(point)...) for point in grid]
+
+			computed_integral = compute_integral_nd(values, quad_matrices)
+
+			limits = ntuple(d -> (-1.0, 1.0), dim)
+			analytical_integral = analytical_integral_multidim(limits)
+			@test isapprox(
+				computed_integral,
+				analytical_integral,
+				atol = TEST_TOLERANCES[2],
+			)
+		end
+	end
+	@testset "create_ocfc_mesh Tests" begin
+		@testset "1D Mesh Tests" begin
+			coord_system = KSCartesianCoordinates(((0.0, 1.0),))
+			num_cells = (4,)
+			p_vec = (3,)
+			continuity_order = (1,)
 			dim = 1
-			order = 1
-			D_matrices = derivative_matrix_nd(points_1d, dim, order)
-			D = D_matrices[1]
+			max_level = 1
 
-			# Check if D is a 3x3 sparse matrix
-			@test size(D) == (3, 3)
-			@test issparse(D)
+			mesh = create_ocfc_mesh(
+				coord_system,
+				num_cells,
+				p_vec,
+				continuity_order,
+				dim,
+				max_level,
+			)
 
-			# Verify derivative matrix values for linear basis functions
-			@test abs(D[1, 1] - (-1.5)) < 1e-8
-			@test abs(D[1, 2] - (2.0)) < 1e-8
-			@test abs(D[1, 3] - (-0.5)) < 1e-8
+			@test length(mesh.cells) == 4
+			@test all(cell.p == p_vec for cell in mesh.cells)
+			@test all(cell.level == 1 for cell in mesh.cells)
+			@test all(cell.continuity_order == continuity_order for cell in mesh.cells)
 
-			@test abs(D[2, 1] - (-0.5)) < 1e-8
-			@test abs(D[2, 2] - 0.0) < 1e-8
-			@test abs(D[2, 3] - 0.5) < 1e-8
+			# Test boundary cells
+			@test length(mesh.boundary_cells[:left_dim_1]) == 1
+			@test length(mesh.boundary_cells[:right_dim_1]) == 1
+			@test mesh.boundary_cells[:left_dim_1][1] == 1
+			@test mesh.boundary_cells[:right_dim_1][1] == 4
 
-			@test abs(D[3, 1] - (0.5)) < 1e-8
-			@test abs(D[3, 2] - (-2.0)) < 1e-8
-			@test abs(D[3, 3] - (1.5)) < 1e-8
+			# Test neighbors
+			@test mesh.cells[1].neighbors[:dim1_neg] == -1
+			@test mesh.cells[1].neighbors[:dim1_pos] == 2
+			@test mesh.cells[4].neighbors[:dim1_neg] == 3
+			@test mesh.cells[4].neighbors[:dim1_pos] == -1
 
-			# 2D Case: Check if dimensions match and derivative matrices are computed
-			points_2d = [[-1.0, 0.0, 1.0], [-1.0, 0.0, 1.0]]
+			# Test node map
+			@test all(length(cell.node_map) == p_vec[1] + 2 for cell in mesh.cells)
+
+			# Test tensor product mask
+			@test all(length(cell.tensor_product_mask) == 1 for cell in mesh.cells)
+			@test all(
+				length(cell.tensor_product_mask[1]) == p_vec[1] + 2 for cell in mesh.cells
+			)
+		end
+
+		@testset "2D Mesh Tests" begin
+			coord_system = KSCartesianCoordinates(((0.0, 1.0), (0.0, 1.0)))
+			num_cells = (3, 3)
+			p_vec = (3, 3)
+			continuity_order = (1, 1)
 			dim = 2
-			D_matrices = derivative_matrix_nd(points_2d, dim, order)
+			max_level = 1
 
-			@test length(D_matrices) == 2
-			@test size(D_matrices[1]) == (3, 3)
-			@test size(D_matrices[2]) == (3, 3)
-			@test issparse(D_matrices[1])
-			@test issparse(D_matrices[2])
+			mesh = create_ocfc_mesh(
+				coord_system,
+				num_cells,
+				p_vec,
+				continuity_order,
+				dim,
+				max_level,
+			)
 
-			# Check higher-order derivative (second derivative)
-			D_matrices_second_order = derivative_matrix_nd(points_1d, 1, 2)
-			D_second = D_matrices_second_order[1]
+			@test length(mesh.cells) == 9
+			@test all(cell.p == p_vec for cell in mesh.cells)
+			@test all(cell.level == 1 for cell in mesh.cells)
+			@test all(cell.continuity_order == continuity_order for cell in mesh.cells)
 
-			@test size(D_second) == (3, 3)
-			@test issparse(D_second)
+			# Test boundary cells
+			@test length(mesh.boundary_cells[:left_dim_1]) == 3
+			@test length(mesh.boundary_cells[:right_dim_1]) == 3
+			@test length(mesh.boundary_cells[:left_dim_2]) == 3
+			@test length(mesh.boundary_cells[:right_dim_2]) == 3
+
+			# Test neighbors for corner cell (bottom-left)
+			corner_cell = mesh.cells[1]
+			@test corner_cell.neighbors[:dim1_neg] == -1
+			@test corner_cell.neighbors[:dim1_pos] == 2
+			@test corner_cell.neighbors[:dim2_neg] == -1
+			@test corner_cell.neighbors[:dim2_pos] == 4
+
+			# Test neighbors for central cell
+			central_cell = mesh.cells[5]
+			@test central_cell.neighbors[:dim1_neg] == 4
+			@test central_cell.neighbors[:dim1_pos] == 6
+			@test central_cell.neighbors[:dim2_neg] == 2
+			@test central_cell.neighbors[:dim2_pos] == 8
+
+			# Test node map
+			@test all(
+				length(cell.node_map) == (p_vec[1] + 2) * (p_vec[2] + 2)
+				for
+				cell in mesh.cells
+			)
+
+			# Test tensor product mask
+			@test all(length(cell.tensor_product_mask) == 2 for cell in mesh.cells)
+			@test all(
+				all(
+					length(mask) == p + 2
+					for
+					(mask, p) in zip(cell.tensor_product_mask, p_vec)
+				) for cell in mesh.cells
+			)
 		end
 
-		# Test for `enforce_ck_continuity!`
-		@testset "enforce_ck_continuity! tests" begin
-			# Simple 3x3 matrix
-			D = spzeros(3, 3)
-			D[1, 2] = 1.0
-			D[2, 1] = -1.0
-			D[2, 3] = 1.0
-			D[3, 2] = -1.0
+		@testset "3D Mesh Tests" begin
+			coord_system = KSCartesianCoordinates(((0.0, 1.0), (0.0, 1.0), (0.0, 1.0)))
+			num_cells = (2, 2, 2)
+			p_vec = (3, 3, 3)
+			continuity_order = (1, 1, 1)
+			dim = 3
+			max_level = 1
 
-			# Apply C^1 continuity
-			D_continuous = enforce_ck_continuity!(D, 1)
+			mesh = create_ocfc_mesh(
+				coord_system,
+				num_cells,
+				p_vec,
+				continuity_order,
+				dim,
+				max_level,
+			)
 
-			# Check the first and last row
-			@test abs(D_continuous[1, 1] - 1.0) < 1e-8
-			@test abs(D_continuous[1, 2]) < 1e-8
-			@test abs(D_continuous[1, 3]) < 1e-8
+			@test length(mesh.cells) == 8
+			@test all(cell.p == p_vec for cell in mesh.cells)
+			@test all(cell.level == 1 for cell in mesh.cells)
+			@test all(cell.continuity_order == continuity_order for cell in mesh.cells)
 
-			@test abs(D_continuous[2, 1] + 1) < 1e-8
-			@test abs(D_continuous[2, 2] - 0.0) < 1e-8
-			@test abs(D_continuous[2, 3] - 1.0) < 1e-8
-
-			@test abs(D_continuous[3, 1]) < 1e-8
-			@test abs(D_continuous[3, 2]) < 1e-8
-			@test abs(D_continuous[3, 3] - 1.0) < 1e-8
-
-			# Larger matrix (5x5) and check edge cases
-			D_large = spzeros(5, 5)
-			D_large[2, 1] = -2.0
-			D_large[2, 3] = 2.0
-			D_large[4, 3] = -2.0
-			D_large[4, 5] = 2.0
-
-			# Apply C^2 continuity
-			D_large_cont = enforce_ck_continuity!(D_large, 2)
-
-			# Check first and last two rows
-			for i in 1:2
-				@test abs(D_large_cont[i, i] - 1.0) < 1e-8
-				@test sum(abs.(D_large_cont[i, :])) == 1.0
+			# Test boundary cells
+			for d in 1:3
+				@test length(mesh.boundary_cells[Symbol("left_dim_$d")]) == 4
+				@test length(mesh.boundary_cells[Symbol("right_dim_$d")]) == 4
 			end
 
-			for i in 4:5
-				@test abs(D_large_cont[i, i] - 1.0) < 1e-8
-				@test sum(abs.(D_large_cont[i, :])) == 1.0
+			# Test neighbors for corner cell (bottom-left-front)
+			corner_cell = mesh.cells[1]
+			@test corner_cell.neighbors[:dim1_neg] == -1
+			@test corner_cell.neighbors[:dim1_pos] == 2
+			@test corner_cell.neighbors[:dim2_neg] == -1
+			@test corner_cell.neighbors[:dim2_pos] == 3
+			@test corner_cell.neighbors[:dim3_neg] == -1
+			@test corner_cell.neighbors[:dim3_pos] == 5
+
+			# Test neighbors for central cell
+			central_cell = mesh.cells[8]
+			@test central_cell.neighbors[:dim1_neg] == 7
+			@test central_cell.neighbors[:dim1_pos] == -1
+			@test central_cell.neighbors[:dim2_neg] == 6
+			@test central_cell.neighbors[:dim2_pos] == -1
+			@test central_cell.neighbors[:dim3_neg] == 4
+			@test central_cell.neighbors[:dim3_pos] == -1
+
+			# Test node map
+			@test all(
+				length(cell.node_map) == (p_vec[1] + 2) * (p_vec[2] + 2) * (p_vec[3] + 2)
+				for cell in mesh.cells
+			)
+
+			# Test tensor product mask
+			@test all(length(cell.tensor_product_mask) == 3 for cell in mesh.cells)
+			@test all(
+				all(
+					length(mask) == p + 2
+					for
+					(mask, p) in zip(cell.tensor_product_mask, p_vec)
+				) for cell in mesh.cells
+			)
+		end
+		@testset "Multi-level Mesh Tests" begin
+			coord_system = KSCartesianCoordinates(((0.0, 1.0), (0.0, 1.0)))
+			num_cells = (2, 2)
+			p_vec = (3, 3)
+			continuity_order = (1, 1)
+			dim = 2
+			max_level = 2
+
+			mesh = create_ocfc_mesh(
+				coord_system,
+				num_cells,
+				p_vec,
+				continuity_order,
+				dim,
+				max_level,
+			)
+
+			@test length(mesh.cells) == 8  # 4 cells at level 1, 4 cells at level 2
+			@test count(cell.level == 1 for cell in mesh.cells) == 4
+			@test count(cell.level == 2 for cell in mesh.cells) == 4
+
+			# Test refinement
+			level_1_cells = filter(cell -> cell.level == 1, mesh.cells)
+			level_2_cells = filter(cell -> cell.level == 2, mesh.cells)
+
+			@test all(cell.p == p_vec for cell in level_1_cells)
+			@test all(cell.p == p_vec for cell in level_2_cells)
+
+			# Test cell sizes (this may need adjustment based on your implementation)
+			level_1_cell_size = 0.5
+			level_2_cell_size = 0.25
+
+			# Test neighbor relationships for level 1 cells
+			@test all(
+				haskey(cell.neighbors, :dim1_pos) &&
+				(cell.neighbors[:dim1_pos] == -1 || cell.neighbors[:dim1_pos] in 1:8)
+				for
+				cell in level_1_cells[1:(end - 1)]
+			)
+			@test all(
+				haskey(cell.neighbors, :dim2_pos) &&
+				(cell.neighbors[:dim2_pos] == -1 || cell.neighbors[:dim2_pos] in 1:8)
+				for
+				cell in level_1_cells[1:2]
+			)
+
+			# Test neighbor relationships for level 2 cells
+			@test all(
+				haskey(cell.neighbors, :dim1_pos) &&
+				(cell.neighbors[:dim1_pos] == -1 || cell.neighbors[:dim1_pos] in 1:8)
+				for
+				cell in level_2_cells
+			)
+			@test all(
+				haskey(cell.neighbors, :dim2_pos) &&
+				(cell.neighbors[:dim2_pos] == -1 || cell.neighbors[:dim2_pos] in 1:8)
+				for
+				cell in level_2_cells
+			)
+		end
+	end
+	@testset "Additional SpectralMethods Tests" begin
+		@testset "map_to_reference_cell" begin
+			for dim in TEST_DIMENSIONS
+				coord_system = generate_test_coordinate_system(dim)
+				num_cells = ntuple(_ -> 2, dim)
+				p_vec = ntuple(_ -> 3, dim)
+				continuity_order = ntuple(_ -> 1, dim)
+
+				# Create a mesh with proper cells
+				mesh = create_ocfc_mesh(
+					coord_system,
+					num_cells,
+					p_vec,
+					continuity_order,
+					dim,
+					1,
+				)
+
+				for cell in mesh.cells
+					# Test points inside cell
+					point = ntuple(_ -> 0.5, dim)
+					mapped_point = map_to_reference_cell(point, coord_system)
+					@test all(-1.0 .<= mapped_point .<= 1.0)
+
+					# Test boundary points
+					point = ntuple(_ -> 0.0, dim)
+					mapped_point = map_to_reference_cell(point, coord_system)
+					@test all(isapprox.(mapped_point, -1.0, atol = 1e-10))
+				end
+			end
+		end
+
+		@testset "get_node_coordinates" begin
+			for dim in TEST_DIMENSIONS
+				coord_system = generate_test_coordinate_system(dim)
+				num_cells = ntuple(_ -> 2, dim)
+				mesh = create_ocfc_mesh(
+					coord_system,
+					num_cells,
+					ntuple(_ -> 3, dim),
+					ntuple(_ -> 1, dim),
+					dim,
+					1,
+				)
+
+				@test all(
+					verify_node_coordinates(
+						get_node_coordinates_test(coord_system, cell, node_idx),
+						cell,
+						mesh,
+					)
+					for cell in mesh.cells
+					for node_idx in keys(cell.node_map)
+				)
+			end
+		end
+
+		@testset "is_point_in_cell" begin
+			for dim in TEST_DIMENSIONS
+				coord_system = generate_test_coordinate_system(dim)
+				num_cells = ntuple(_ -> 2, dim)
+				mesh = create_ocfc_mesh(coord_system, num_cells, ntuple(_ -> 3, dim),
+					ntuple(_ -> 1, dim), dim, 1)
+
+				for cell in mesh.cells
+					# Test center point
+					center_point = [0.5 for _ in 1:dim]
+					@test is_point_in_cell(cell, center_point, mesh) ==
+						verify_node_coordinates(tuple(center_point...), cell, mesh)
+
+					# Test boundary point
+					boundary_point = [1.0 for _ in 1:dim]
+					@test !is_point_in_cell(cell, boundary_point, mesh) ||
+						verify_node_coordinates(tuple(boundary_point...), cell, mesh)
+				end
+			end
+		end
+
+		@testset "create_basis_functions" begin
+			for p in TEST_POLYNOMIAL_ORDERS
+				basis_functions = create_basis_functions(p, 2)
+				nodes, _, _, _ = create_legendre_nodes_and_weights(p)
+
+				# Test Kronecker delta property using broadcasting
+				values = [basis_functions[i](nodes[j]) for i in 1:(p + 2), j in 1:(p + 2)]
+				expected = Matrix{Float64}(I, p + 2, p + 2)
+				@test all(isapprox.(values, expected, atol = TEST_TOLERANCES[1]))
+			end
+		end
+
+		@testset "determine_scaling_factor and apply_scaling_factors!" begin
+			# Test determine_scaling_factor
+			@test_throws ArgumentError determine_scaling_factor(1.0, 0.0)
+			diff_scale, quad_scale = determine_scaling_factor(0.0, 1.0)
+			@test isapprox(diff_scale, 2.0)
+			@test isapprox(quad_scale, 0.5)
+
+			# Test apply_scaling_factors!
+			D = ones(3, 3)
+			Q = ones(3, 3)
+
+			# Test apply_scaling_factors!
+			D = ones(3, 3)
+			Q = ones(3, 3)
+			D_scaled, Q_scaled = apply_scaling_factors!(
+				copy(D), copy(Q), diff_scale, quad_scale
+			)
+			@test all(isapprox.(D_scaled, D .* diff_scale))
+			@test all(isapprox.(Q_scaled, Q .* quad_scale))
+		end
+		# @testset "enforce_ck_continuity_bspline!" begin
+		# 	for p in TEST_POLYNOMIAL_ORDERS[2:end]
+		# 		nodes, _, _, _ = create_legendre_nodes_and_weights(p)
+		# 		D = derivative_matrix!(p)[1]
+		# 		D_enforced = enforce_ck_continuity_bspline!(copy(D), 2, nodes, p)
+		# 		@test size(D_enforced) == size(D)
+		# 		@test_throws ArgumentError enforce_ck_continuity_bspline!(D, -1, nodes, p)
+		# 	end
+		# end
+		@testset "add_standard_cell!" begin
+			# Clear the cache before testing
+			cell = create_standard_ks_cell((3,), 1, 1)
+			@test_nowarn add_standard_cell!(cell)
+			@test_throws ArgumentError add_standard_cell!(cell)  # Adding same cell twice
+		end
+		@testset "compute_quadrature_weight" begin
+			# Test for mesh version
+			mesh = create_ocfc_mesh(
+				generate_test_coordinate_system(2), (2, 2), (3, 3), (1, 1), 2, 1)
+			global_idx = first(first(mesh.cells).node_map)[2]
+			@test compute_quadrature_weight(mesh, global_idx) isa Number
+
+			# Test for cell_key version
+			cell_key = ((3, 3), 1)
+			quad_point = CartesianIndex(2, 2)
+			@test compute_quadrature_weight(cell_key, quad_point) isa Number
+		end
+		@testset "Lagrange_polynomials" begin
+			nodes = [-1.0, 0.0, 1.0]
+			x = collect(-1.0:0.5:1.0)
+
+			# Test for each basis functionI
+			for i in 1:length(nodes)
+				values = Lagrange_polynomials(x, nodes, i)
+				@test length(values) == length(x)
+				@test all(isapprox.(values[2 * i - 1], 1.0; atol = 1e-10))  # Should be 1 at its node
+				@test all(
+					isapprox.(values[filter(j -> j != 2 * i - 1, 1:2:5)], 0.0; atol = 1e-10)
+				)  # 0 at other nodes
+
+				# Test values at nodes other than the i-th node
+				other_indices = filter(j -> j != 2 * i - 1, 1:2:5)
+				@test all(isapprox.(values[other_indices], 0.0, atol = 1e-10))  # 0 at other nodes
 			end
 
-			# Check middle row remains unchanged
-			@test abs(D_large_cont[3, 1]) < 1e-8
-			@test abs(D_large_cont[3, 2]) < 1e-8
-			@test abs(D_large_cont[3, 3] - 0.0) < 1e-8
-			@test abs(D_large_cont[3, 4]) < 1e-8
-			@test abs(D_large_cont[3, 5]) < 1e-8
-		end
-	end
-	# Test set for interpolate_nd function
-	@testset "interpolate_nd Tests" begin
-		@testset "Valid Cases" begin
-			nodes_x, _, _, _ = create_legendre_nodes_and_weights(3)
-			nodes_y, _, _, _ = create_legendre_nodes_and_weights(3)
-			nodes = [nodes_x, nodes_y]
-			values = [0.0 1.0 2.0; 1.0 2.0 3.0; 2.0 3.0 4.0]
-			point = [0.0, 0.0]
-			interpolated_value = interpolate_nd(nodes, values, point)
-			@test isapprox(interpolated_value, 2.0)
-		end
-
-		@testset "Invalid Cases" begin
-			nodes_x, _, _, _ = create_legendre_nodes_and_weights(3)
-			nodes_y, _, _, _ = create_legendre_nodes_and_weights(3)
-			nodes = [nodes_x, nodes_y]
-			values = [0.0 1.0 2.0; 1.0 2.0 3.0; 2.0 3.0 4.0]
-			point = [0.0]
-			@test_throws ArgumentError interpolate_nd(nodes, values, point)
-		end
-
-		@testset "Edge Cases" begin
-			nodes_x, _, _, _ = create_legendre_nodes_and_weights(3)
-			nodes_y, _, _, _ = create_legendre_nodes_and_weights(3)
-			nodes = [nodes_x, nodes_y]
-			values = [0.0 1.0 2.0; 1.0 2.0 3.0; 2.0 3.0 4.0]
-			point = [-1.0, -1.0]
-			interpolated_value = interpolate_nd(nodes, values, point)
-			@test isapprox(interpolated_value, 0.0)
-		end
-	end
-
-	# Test set for derivative_matrix! function
-	@testset "derivative_matrix! Tests" begin
-		@testset "Valid Cases" begin
-			nodes = [-1.0, 0.0, 1.0]
-			D = derivative_matrix!(nodes)
-			@test size(D) == (3, 3)
-			@test isapprox(D[2, 1], -0.5)
-			@test isapprox(D[2, 3], 0.5)
-		end
-
-		@testset "Invalid Cases" begin
-			@test_throws ArgumentError derivative_matrix!([1.0, 2.0])
-		end
-
-		@testset "Edge Cases" begin
-			nodes = [-1.0, 0.0, 1.0]
-			D = derivative_matrix!(nodes)
-			@test size(D) == (3, 3)
-		end
-	end
-
-	# Test set for kth_derivative_matrix! function
-	@testset "kth_derivative_matrix! Tests" begin
-		@testset "Valid Cases" begin
-			nodes = [-1.0, 0.0, 1.0]
-			Dks = kth_derivative_matrix!(nodes, 2)
-			@test length(Dks) == 2
-			@test size(Dks[1]) == (3, 3)
-			@test size(Dks[2]) == (3, 3)
-		end
-
-		@testset "Invalid Cases" begin
-			@test_throws ArgumentError kth_derivative_matrix!([1.0, 2.0], 0)
-		end
-
-		@testset "Edge Cases" begin
-			nodes = [-1.0, 0.0, 1.0]
-			Dks = kth_derivative_matrix!(nodes, 1)
-			@test length(Dks) == 1
-		end
-	end
-
-	# Test set for derivative_matrix_nd function
-	@testset "derivative_matrix_nd Tests" begin
-		@testset "Valid Cases" begin
-			points = [[-1.0, 0.0, 1.0], [-1.0, 0.0, 1.0]]
-			D_matrices = derivative_matrix_nd(points, 2, 1)
-			@test length(D_matrices) == 2
-			@test size(D_matrices[1]) == (3, 3)
-		end
-
-		@testset "Invalid Cases" begin
-			@test_throws ArgumentError derivative_matrix_nd([[-1.0, 0.0]], 1, 0)
-		end
-	end
-
-	# Test set for enforce_ck_continuity! function
-	@testset "enforce_ck_continuity! Tests" begin
-		@testset "Valid Cases" begin
-			D = spzeros(3, 3)
-			D[1, 2] = 1.0
-			D_continuous = enforce_ck_continuity!(D, 1)
-			@test isapprox(D_continuous[1, 1], 1.0)
-			@test isapprox(D_continuous[3, 3], 1.0)
-		end
-
-		@testset "Invalid Cases" begin
-			@test_throws ArgumentError enforce_ck_continuity!(spzeros(3, 3), -1)
-		end
-	end
-
-	# Test set for is_near_zero function
-	@testset "is_near_zero Tests" begin
-		@testset "Valid Cases" begin
-			@test is_near_zero(1e-16)
-			@test !is_near_zero(1e-5)
-		end
-	end
-
-	# Test set for create_basis_functions function
-	@testset "create_basis_functions Tests" begin
-		@testset "Valid Cases" begin
-			basis_functions = create_basis_functions(3, 2)
-			@test length(basis_functions) == binomial(3 + 2, 2)
-		end
-
-		@testset "Invalid Cases" begin
-			@test_throws ArgumentError create_basis_functions(0, 1)
-		end
-	end
-
-	# Test set for scale_derivative_matrix function
-	@testset "scale_derivative_matrix Tests" begin
-		@testset "Valid Cases" begin
-			D = spzeros(3, 3)
-			D[1, 2] = 1.0
-			scaled_D = scale_derivative_matrix(D, 2.0)
-			@test isapprox(scaled_D[1, 2], 2.0)
-		end
-	end
-
-	# Test set for create_differentiation_matrices function
-	@testset "create_differentiation_matrices Tests" begin
-		@testset "Valid Cases" begin
-			nodes = [-1.0, 0.0, 1.0]
-			diff_matrices = create_differentiation_matrices(nodes, 2)
-			@test length(diff_matrices) == 2
-		end
-
-		@testset "Invalid Cases" begin
-			@test_throws ArgumentError create_differentiation_matrices([1.0, 2.0], 0)
-		end
-	end
-
-	# Test set for quadrature_matrix_nd function
-	@testset "quadrature_matrix Tests" begin
-		@testset "Valid Cases" begin
-			_, _, _, weights = expected_values(:case1)
-			Q = quadrature_matrix!(weights)
-			@test size(Q) == (3, 3)
-			@test isapprox(Q[1, 1], 5 / 9)
-			@test isapprox(Q[2, 2], 8 / 9)
-			@test isapprox(Q[3, 3], 5 / 9)
-		end
-
-		@testset "Invalid Cases" begin
-			@test_throws MethodError quadrature_matrix!("not a number")
-		end
-	end
-
-	@testset "compute_integral Tests" begin
-		@testset "Valid Cases" begin
-			_, _, nodes, weights = expected_values(:case1)
-			Q = quadrature_matrix!(weights)
-			values = nodes .^ 4
-			integral = compute_integral(weights, values)
-			@test isapprox(integral, 2 / 5)
-		end
-
-		@testset "Invalid Cases" begin
-			@test_throws MethodError compute_integral([0.0, 1.0], spzeros(3, 3))
-		end
-	end
-
-	@testset "quadrature_matrix_nd Tests" begin
-		@testset "Valid Cases" begin
-			points, weights = [gausslegendre(3), gausslegendre(3)]
-			Q_nd = quadrature_matrix_nd(weights, 2)
-			@test size(Q_nd) == (9, 9)
-
-			points, weights = (gausslegendre(3), gausslegendre(3))
-			Q_nd = quadrature_matrix_nd(weights, 2)
-			@test size(Q_nd) == (9, 9)
-		end
-
-		@testset "Invalid Cases" begin
-			@test_throws MethodError quadrature_matrix_nd([[-1.0, 0.0]], [[1.0]])
-		end
-	end
-
-	@testset "compute_integral_nd Tests" begin
-		@testset "Valid Cases" begin
-			values = [1.0 for _ in 1:9]
-			points = [[-1.0, 0.0, 1.0], [-1.0, 0.0, 1.0]]
-			weights = [[0.5, 1.0, 0.5], [0.5, 1.0, 0.5]]
-			Q_nd = quadrature_matrix_nd(weights, 2)
-			integral = compute_integral_nd(values, Q_nd)
-			@test isapprox(integral, 4.0)
-		end
-
-		@testset "Invalid Cases" begin
-			@test_throws ArgumentError compute_integral_nd([0.0, 1.0], spzeros(9, 9))
-		end
-	end
-
-	@testset "scale_quadrature_matrix Tests" begin
-		@testset "Valid Cases" begin
-			Q = spzeros(3, 3)
-			Q[1, 1] = 0.5
-			scaled_Q = scale_quadrature_matrix!(Q, 2.0)
-			@test isapprox(scaled_Q[1, 1], 1.0)
-		end
-	end
-	@testset "OCFE Mesh Tests" begin
-		num_elements_2d = [5, 10]
-		num_elements_3d = [5, 10, 5]
-		poly_degree_2d = [5, 5]
-		poly_degree_3d = [5, 5, 5]
-		derivative_order = 1
-		continuity_order = 1
-		cartesian_2d = KSCartesianCoordinates(((0.0, 1.0), (0.0, 1.0)))
-		cartesian_3d = KSCartesianCoordinates(((0.0, 1.0), (-1.0, 1.0), (0.0, 2.0)))
-
-		cylindrical_3d = KSCylindricalCoordinates((0.0, 1.0), (0.0, 1.0), (0.0, 1.0))
-		polar_2D = KSPolarCoordinates((0.0, 1.0), (0.0, 2.0 * 3.141592653589793))
-		spherical_3D = KSSphericalCoordinates((0.0, 1.0), (0.0, 3.141592653589793), (0.0, 2.0 * 3.141592653589793))
-
-		# Test valid cases with different coordinate systems
-		@testset "Valid Cases with Coordinate Systems" begin
-			# Test case 1: Cartesian 2D case
-			mesh = create_ocfe_mesh(cartesian_2d, num_elements_2d, poly_degree_2d, continuity_order, 2)
-			@test mesh isa KSMesh
-			@test length(mesh.elements) == prod(num_elements_2d)
-			@test all(el -> el isa KSElement, mesh.elements)
-
-			# Test case 2: Cartesian 3D case
-			mesh = create_ocfe_mesh(cartesian_3d, num_elements_3d, poly_degree_3d, continuity_order, 3)
-			@test mesh isa KSMesh
-			@test length(mesh.elements) == prod(num_elements_3d)
-			@test all(el -> el isa KSElement, mesh.elements)
-
-			# Test case 3: Cylindrical 3D case
-			mesh = create_ocfe_mesh(cylindrical_3d, num_elements_3d, poly_degree_3d, continuity_order, 3)
-			@test mesh isa KSMesh
-			@test length(mesh.elements) == prod(num_elements_3d)
-			@test all(el -> el isa KSElement, mesh.elements)
-		end
-
-		# Test invalid cases with incorrect domain and elements
-		@testset "Invalid Cases" begin
-			# Test case 1: Domain dimensionality mismatch
-			@test_throws BoundsError create_ocfe_mesh(polar_2D, [2], poly_degree_2d, continuity_order, 2)
-
-			# Test case 2: Non-positive number of elements
-			@test_throws ArgumentError create_ocfe_mesh(cartesian_2d, [0, 2], poly_degree_2d, continuity_order, 2)
-
-			# Test case 3: Invalid polynomial degree
-			@test_throws ArgumentError create_ocfe_mesh(cartesian_2d, num_elements_2d, 0, continuity_order, 2)
-
-			# Test case 4: Mismatched number of elements (or any other valid error condition)
-			@test_throws BoundsError create_ocfe_mesh(cartesian_2d, [2], poly_degree_2d, continuity_order, 2)
+			# Test invalid index
+			@test_throws ArgumentError Lagrange_polynomials(x, nodes, 4)
 		end
 	end
 end

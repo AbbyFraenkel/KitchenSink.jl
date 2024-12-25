@@ -1,0 +1,25 @@
+# Ignore Julia compiled files
+*.ji
+
+# Ignore Julia package environments
+Manifest.toml
+Project.toml
+
+# Ignore VSCode settings
+.vscode/
+
+# Ignore compiled shared libraries
+*.so
+*.dylib
+*.dll
+
+# Ignore temporary files
+*.tmp
+*.log
+
+# Ignore backup files
+*~
+*.bak
+
+# Ignore build directories
+/build/

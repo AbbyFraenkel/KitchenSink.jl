@@ -1,29 +1,22 @@
 using Documenter
 using KitchenSink
 
+include("pages.jl")
 makedocs(
-    modules = [
-        AdaptiveMethods,
-        CommonMethods,
-        CoordinateSystems,
-        ErrorEstimation,
-        IntergridOperators,
-        KSTypes,
-        LinearSolvers,
-        MultiLevelMethods,
-        Optimization,
-        Preconditioners,
-        Preprocessing,
-        ProblemTypes,
-        SpectralMethods,
-        TimeStepping
-    ],
     sitename = "KitchenSink Documentation",
-    format = Documenter.HTML(),
+    format = [
+        Documenter.HTML(),  # HTML format for web documentation
+        Documenter.PDF()    # Optional PDF documentation (requires LaTeX)
+    ],
     pages = [
-        "Home" => "index.md",
-        "API" => "api.md",
-        "Guides" => "guide.md",
-        "Tutorials" => "tutorials/index.md",
+        "Home" => "index.md",         # Home page
+        "API" => "api.md",            # API Reference
+        "Guides" => "guide.md",       # General guides
+        "Theory" => "theory.md",      # Theoretical overview
+        "Tutorials" => "tutorials/index.md"  # Tutorials and examples
+    ],
+    deploydocs = [
+        repo = "AbbyFraenkel/KitchenSink",  # Replace with your GitHub username/repo
+        target = "gh-pages"                 # Deployment target branch
     ]
 )

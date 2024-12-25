@@ -75,7 +75,8 @@
             @test all(size(D) == (p^2, p^2) for D in D_2d)
 
             # 3D case
-            points_3d, _ = gauss_legendre_with_boundary_nd(p, 3, [-1.0, -1.0, -1.0], [1.0, 1.0, 1.0])
+            points_3d, _ = gauss_legendre_with_boundary_nd(
+                p, 3, [-1.0, -1.0, -1.0], [1.0, 1.0, 1.0])
             D_3d = derivative_matrix_nd(points_3d, 3, 1)
             @test length(D_3d) == 3
             @test all(size(D) == (p^3, p^3) for D in D_3d)

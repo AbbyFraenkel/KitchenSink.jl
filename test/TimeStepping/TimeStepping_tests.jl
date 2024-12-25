@@ -1,252 +1,256 @@
-using Test, LinearAlgebra, SparseArrays
-
+using Test
+using LinearAlgebra, SparseArrays
+using OrdinaryDiffEq
+using KitchenSink.KSTypes
 using KitchenSink.TimeStepping
-@testset "Implicit methods" begin
+using KitchenSink.CoordinateSystems
+using KitchenSink.SpectralMethods
 
-	# Helper functions
-	function mock_solver(residual, u_init)
-		u_new = u_init
-		for _ in 1:10
-			u_new = residual(u_new) + u_new
-		end
-		return u_new
-	end
+@testset "TimeStepping Tests" begin
 
-	f_linear(u, t; a = 1.0, b = 0.0) = a * u + b
-	f_nonlinear(u, t) = u^2 + t
 
-	@testset "Implicit Methods" begin
-		@testset "backward_euler!" begin
-			@testset "Linear function" begin
-				u0, t0, dt = 1.0, 0.0, 0.1
-				a, b = 1.0, 0.0
-				u_expected = (u0 + dt * b) / (1 - dt * a)
-				u_computed = backward_euler!([u0], t0, dt, (u, t) -> f_linear(u, t, a = a, b = b), mock_solver)
-				@test u_computed[1] ≈ u_expected
-			end
+    @testset "ODE Integration" begin
+        domain, coord_sys, mesh = create_test_setup()
 
-			@testset "Nonlinear function" begin
-				u0, t0, dt = 1.0, 0.0, 0.1
-				u_expected = 1.1 # Approximated value
-				u_computed = backward_euler!([u0], t0, dt, f_nonlinear, mock_solver)
-				@test u_computed[1]≈u_expected atol=1e-2
-			end
+        # Create simple heat equation
+        problem = KSPDEProblem(;
+            pde = (x, D) -> (D[1] + D[2], zeros(1)),
+            boundary_conditions = [],
+            domain = domain,
+            initial_conditions = x -> exp(-norm(x)^2), # Gaussian IC
+            tspan = (0.0, 1.0),
+            coordinate_system = coord_sys,
+            num_vars = 1
+        )
 
-			@testset "Stiff ODE" begin
-				problem = KSODEProblem((y) -> -1000 * y + 3000 - 2000 * exp(-t), (0.0, 0.1), [0.0])
-				t, y = 0.0, [0.0]
-				for _ in 1:10
-					y = backward_euler!(y, t, 0.01, problem.ode, (F, x) -> x .- F(x))
-					t += 0.01
-				end
-				exact = 3 - 0.998 * exp(-1000 * 0.1) - 2.002 * exp(-0.1)
-				@test y[1]≈exact atol=1e-2
-			end
-		end
+        # Test problem conversion
+        ode_prob = to_ode_problem(problem, mesh)
+        @test ode_prob isa ODEProblem
+        @test ode_prob.tspan == problem.tspan
 
-		@testset "implicit_midpoint!" begin
-			@testset "Linear function" begin
-				u0, t0, dt = 1.0, 0.0, 0.1
-				a, b = 1.0, 0.0
-				u_expected = (u0 + dt * b) / (1 - dt * a)
-				u_computed = implicit_midpoint!([u0], t0, dt, (u, t) -> f_linear(u, t, a = a, b = b), mock_solver)
-				@test u_computed[1] ≈ u_expected
-			end
+        # Test solution
+        sol = solve_time_dependent_problem(
+            problem, mesh, dt=0.1)
+        @test sol.retcode == :Success
+        @test length(sol.t) > 1
+    end
 
-			@testset "Nonlinear function" begin
-				u0, t0, dt = 1.0, 0.0, 0.1
-				u_expected = 1.1 # Approximated value
-				u_computed = implicit_midpoint!([u0], t0, dt, f_nonlinear, mock_solver)
-				@test u_computed[1]≈u_expected atol=1e-2
-			end
+    @testset "DAE Integration" begin
+        domain, coord_sys, mesh = create_test_setup()
 
-			@testset "Simple ODE" begin
-				problem = KSODEProblem((y) -> -y, (0.0, 1.0), [1.0])
-				t, y = 0.0, [1.0]
-				for _ in 1:10
-					y = implicit_midpoint!(y, t, 0.1, problem.ode, (F, x) -> x .- F(x))
-					t += 0.1
-				end
-				@test y[1]≈exp(-1.0) atol=1e-3
-			end
-		end
+        problem = KSDAEProblem(;
+            dae = (t, x, D) -> (D[1], zeros(2)),
+            boundary_conditions = [],
+            domain = domain,
+            initial_conditions = zeros(2),
+            tspan = (0.0, 1.0),
+            coordinate_system = coord_sys,
+            num_vars = 2,
+            num_algebraic_vars = 1
+        )
 
-		@testset "PDE with Implicit Euler" begin
-			pde = KSPDEProblem((u, x, t) -> [sum(∇²(u))],
-							   (u, x) -> 0.0,
-							   (0.0, 1.0),
-							   ((0.0, 1.0),))
-			mesh = Preprocessing.create_mesh(pde.domain, (20,), 2, KSCartesianCoordinates{1, Float64}((0.0,)))
-			u0 = [sin(π * p.coordinates[1]) for p in mesh.nodes]
-			solution = solve_pde(pde, mesh, u0, KSTimeSteppingSolver(:implicit_euler, 0.01, 1.0, 1e-6))
-			@test maximum(abs.(solution[end])) < maximum(abs.(u0))
-		end
+        opts = process_problem_options(problem, 0.1)
+        @test haskey(opts, :diffstates)
+        @test length(opts[:diffstates]) == problem.num_vars
 
-		@testset "DAE with Implicit Euler" begin
-			L = 1.0
-			dae = KSDAEProblem((y, yp) -> [yp[1] - y[2], yp[2] + y[4] * y[1], y[1]^2 + y[3]^2 - L^2],
-							   (0.0, 1.0),
-							   [L, 0.0, 0.0, 0.0])
-			solution = solve_dae(dae, KSTimeSteppingSolver(:implicit_euler, 0.01, 1.0, 1e-6))
-			@test isapprox(solution[end][1]^2 + solution[end][3]^2, L^2, atol = 1e-3)
-		end
-	end
-end
+        # Test solution
+        sol = solve_time_dependent_problem(
+            problem, mesh, alg=IDA())
+        @test sol.retcode == :Success
+    end
 
-@testset "Explicit methods" begin
-	using Test, LinearAlgebra, SparseArrays
-	using ..KSTypes, ..ProblemTypes, ..TimeStepping, ..SpectralMethods, ..Preprocessing, ..CoordinateSystems
+    @testset "Moving Boundary Integration" begin
+        domain, coord_sys, mesh = create_test_setup()
 
-	# Helper functions
-	function simple_decay(y)
-		-y
-	end
+        problem = KSMovingBoundaryPDEProblem(;
+            pde = (x, D) -> (D[1], zeros(1)),
+            boundary_conditions = [],
+            domain = domain,
+            initial_conditions = zeros(1),
+            tspan = (0.0, 1.0),
+            boundary_motion = (x, t) -> x .+ 0.1t,  # Simple translation
+            coordinate_system = coord_sys,
+            num_vars = 1
+        )
 
-	function lotka_volterra(y)
-		α, β, δ, γ = 1.5, 1.0, 3.0, 1.0
-		[α * y[1] - β * y[1] * y[2], δ * y[1] * y[2] - γ * y[2]]
-	end
+        # Test options
+        opts = process_problem_options(problem, 0.1)
+        @test opts[:adaptive] == true
+        @test opts[:force_dtmin] == true
 
-	function harmonic_oscillator(y)
-		[y[2], -y[1]]
-	end
+        # Test solution
+        sol = solve_time_dependent_problem(
+            problem, mesh, dt=0.1)
+        @test sol.retcode == :Success
 
-	@testset "Explicit Methods" begin
-		@testset "Simple Decay ODE" begin
-			problem = KSODEProblem(simple_decay, (0.0, 1.0), [1.0])
-			exact_solution(t) = exp(-t)
+        # Test mesh motion updates
+        A = spzeros(10, 10)
+        b = zeros(10)
+        t = 0.5
+        update_time_dependent_terms!(A, b, t, problem, mesh)
+        @test !iszero(A)  # Should have ALE terms
+    end
 
-			@testset "Forward Euler" begin
-				t, y = 0.0, [1.0]
-				dt = 0.001
-				for _ in 1:1000
-					y = forward_euler!(y, t, dt, problem.ode)
-					t += dt
-				end
-				@test y[1]≈exact_solution(1.0) atol=1e-2
-			end
+    @testset "IDE Integration" begin
+        domain, coord_sys, mesh = create_test_setup()
 
-			@testset "RK4" begin
-				t, y = 0.0, [1.0]
-				dt = 0.1
-				for _ in 1:10
-					y = rk4!(y, t, dt, problem.ode)
-					t += dt
-				end
-				@test y[1]≈exact_solution(1.0) atol=1e-4
-			end
+        problem = KSIDEProblem(;
+            ide = (t, x, D) -> (D[1], zeros(1)),
+            kernel = (x, y) -> exp(-norm(x - y)),
+            boundary_conditions = [],
+            domain = domain,
+            initial_conditions = zeros(1),
+            tspan = (0.0, 1.0),
+            coordinate_system = coord_sys,
+            num_vars = 1
+        )
 
-			@testset "RK45" begin
-				t, y = 0.0, [1.0]
-				dt = 0.1
-				y, error_estimate = rk45!(y, t, dt, problem.ode)
-				@test y[1]≈exact_solution(dt) atol=1e-5
-				@test error_estimate < 1e-5
-			end
-		end
+        # Test integral term updates
+        A = spzeros(10, 10)
+        b = zeros(10)
+        t = 0.5
+        update_time_dependent_terms!(A, b, t, problem, mesh)
 
-		@testset "Lotka-Volterra System" begin
-			problem = KSODEProblem(lotka_volterra, (0.0, 10.0), [1.0, 1.0])
-			solution = solve_ode(problem, KSTimeSteppingSolver(:rk4, 0.01, 10.0, 1e-6))
+        # Test solution
+        sol = solve_time_dependent_problem(
+            problem, mesh, dt=0.1)
+        @test sol.retcode == :Success
+    end
 
-			@test length(solution) == 2
-			@test all(x -> x > 0, solution[end])
+    @testset "PIDE Integration" begin
+        domain, coord_sys, mesh = create_test_setup()
 
-			# Check if the solution is oscillatory
-			peaks = findlocalmaxima(solution.u[1])
-			@test length(peaks) > 1
-		end
+        problem = KSPIDEProblem(;
+            pide = (x, D) -> (D[1], zeros(1)),
+            kernel = (x, y) -> exp(-norm(x - y)),
+            boundary_conditions = [],
+            domain = domain,
+            initial_conditions = zeros(1),
+            tspan = (0.0, 1.0),
+            coordinate_system = coord_sys,
+            num_vars = 1
+        )
 
-		@testset "Symplectic Euler for Harmonic Oscillator" begin
-			problem = KSODEProblem(harmonic_oscillator, (0.0, 1000.0), [1.0, 0.0])
-			solution = solve_ode(problem, KSTimeSteppingSolver(:symplectic_euler, 0.1, 1000.0, 1e-6))
+        # Test both PDE and integral updates
+        A = spzeros(10, 10)
+        b = zeros(10)
+        t = 0.5
+        update_time_dependent_terms!(A, b, t, problem, mesh)
 
-			initial_energy = 0.5 * (problem.initial_conditions[1]^2 + problem.initial_conditions[2]^2)
-			final_energy = 0.5 * (solution[end][1]^2 + solution[end][2]^2)
-			@test isapprox(initial_energy, final_energy, rtol = 1e-3)
+        # Test solution
+        sol = solve_time_dependent_problem(
+            problem, mesh, dt=0.1)
+        @test sol.retcode == :Success
+    end
 
-			# Check if the solution is periodic
-			@test isapprox(solution[1], solution[end], rtol = 1e-2)
-		end
+    @testset "Solution Processing" begin
+        domain, coord_sys, mesh = create_test_setup()
 
-		@testset "Stability Test" begin
-			stiff_problem = KSODEProblem((y) -> -50 * y, (0.0, 1.0), [1.0])
+        # Create test problem
+        problem = KSPDEProblem(;
+            pde = (x, D) -> (D[1] + D[2], zeros(1)),
+            boundary_conditions = [],
+            domain = domain,
+            initial_conditions = x -> exp(-norm(x)^2),
+            tspan = (0.0, 1.0),
+            coordinate_system = coord_sys,
+            num_vars = 1
+        )
 
-			@testset "Forward Euler Instability" begin
-				t, y = 0.0, [1.0]
-				dt = 0.1
-				@test_throws DomainError begin
-					for _ in 1:10
-						y = forward_euler!(y, t, dt, stiff_problem.ode)
-						@assert !isnan(y[1])&&abs(y[1]) < 1e10 "Solution blew up"
-						t += dt
-					end
-				end
-			end
+        # Solve
+        sol = solve_time_dependent_problem(
+            problem, mesh, dt=0.1)
 
-			@testset "RK4 Stability" begin
-				t, y = 0.0, [1.0]
-				dt = 0.1
-				for _ in 1:10
-					y = rk4!(y, t, dt, stiff_problem.ode)
-					t += dt
-				end
-				@test !isnan(y[1]) && abs(y[1]) < 1.0
-			end
-		end
-	end
-end
+        # Test solution extraction
+        t_test = 0.5
+        u_test = extract_solution_at_time(
+            sol, t_test, problem, mesh)
 
-@testset "Adaptive TimeStepping" begin
-	function mock_problem(u, t, dt, solver_options)
-		# Simulate a problem that halves the error with each iteration
-		local_error = norm(u) * 0.5
-		u_new = u * 0.9 # Simulate some state update
-		return u_new, local_error
-	end
+        @test length(u_test) == get_total_dof(mesh)
+        @test !any(isnan, u_test)
+        @test !any(isinf, u_test)
+    end
 
-	@testset "adaptive_timestep! Tests" begin
-		tol = 0.1
-		initial_dt = 1.0
-		t = 0.0
-		u = [1.0, 2.0]
-		# solver_options = MockKSSolverOptions()
+    @testset "Algorithm Selection" begin
+        domain, coord_sys, mesh = create_test_setup()
 
-		@testset "Tolerance Met" begin
-			u_new, dt_new = adaptive_timestep!(copy(u), t, initial_dt, mock_problem, solver_options, tol)
-			@test dt_new < initial_dt
-			@test norm(u_new) < norm(u)
-		end
+        # Test different algorithms
+        algorithms = [
+            Tsit5(),
+            Rodas4(),
+            QNDF(),
+            RadauIIA5()
+        ]
 
-		@testset "Tolerance Already Met" begin
-			local_tol = 10.0 # Set a tolerance that is already met
-			u_new, dt_new = adaptive_timestep!(copy(u), t, initial_dt, mock_problem, solver_options, local_tol)
-			@test dt_new == initial_dt
-			@test all(u_new .== u)
-		end
+        problem = KSPDEProblem(;
+            pde = (x, D) -> (D[1] + D[2], zeros(1)),
+            boundary_conditions = [],
+            domain = domain,
+            initial_conditions = zeros(1),
+            tspan = (0.0, 1.0),
+            coordinate_system = coord_sys,
+            num_vars = 1
+        )
 
-		@testset "Error Reduction Check" begin
-			u_new, dt_new = adaptive_timestep!(copy(u), t, initial_dt, mock_problem, solver_options, tol)
-			@test dt_new < initial_dt # Check that dt is reduced
-		end
+        for alg in algorithms
+            sol = solve_time_dependent_problem(
+                problem, mesh, alg=alg)
+            @test sol.retcode == :Success
+        end
+    end
 
-		@testset "Return Values" begin
-			u_new, dt_new = adaptive_timestep!(copy(u), t, initial_dt, mock_problem, solver_options, tol)
-			@test u_new isa AbstractArray
-			@test dt_new isa Real
-		end
+    @testset "Performance and Stability" begin
+        domain, coord_sys, mesh = create_test_setup()
 
-		@testset "adaptive_timestep!" begin
-			# Test ODE: dy/dt = -y, y(0) = 1
-			problem = KSODEProblem((y) -> -y, (0.0, 1.0), [1.0])
-			t, y = 0.0, [1.0]
-			dt = 0.1
-			tol = 1e-4
-			while t < 1.0
-				y, dt = adaptive_timestep!(y, t, dt, problem.ode, KSSolverOptions(100, tol, true), tol)
-				t += dt
-			end
-			@test y[1]≈exp(-1.0) atol=1e-3
-		end
-	end
+        # Create stiff problem
+        λ = -50.0  # Stiff eigenvalue
+        problem = KSODEProblem(;
+            ode = (t, x, D) -> (λ*x, zeros(1)),
+            boundary_conditions = [],
+            domain = domain,
+            initial_conditions = ones(1),
+            tspan = (0.0, 1.0),
+            coordinate_system = coord_sys,
+            num_vars = 1
+        )
+
+        # Test with explicit solver
+        sol_explicit = solve_time_dependent_problem(
+            problem, mesh, alg=RK4())
+
+        # Test with implicit solver
+        sol_implicit = solve_time_dependent_problem(
+            problem, mesh, alg=Rodas4())
+
+        # Implicit should use fewer steps
+        @test length(sol_implicit.t) < length(sol_explicit.t)
+    end
+
+    @testset "Error Control" begin
+        domain, coord_sys, mesh = create_test_setup()
+
+        problem = KSPDEProblem(;
+            pde = (x, D) -> (D[1] + D[2], zeros(1)),
+            boundary_conditions = [],
+            domain = domain,
+            initial_conditions = zeros(1),
+            tspan = (0.0, 1.0),
+            coordinate_system = coord_sys,
+            num_vars = 1
+        )
+
+        # Test different tolerances
+        tolerances = [1e-3, 1e-6, 1e-9]
+        steps = Int[]
+
+        for tol in tolerances
+            sol = solve_time_dependent_problem(
+                problem, mesh,
+                abstol=tol, reltol=tol)
+            push!(steps, length(sol.t))
+        end
+
+        # Stricter tolerance should need more steps
+        @test issorted(steps)
+    end
 end

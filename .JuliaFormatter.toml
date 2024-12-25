@@ -1,0 +1,7 @@
+# .JuliaFormatter.toml
+style = "sciml"
+margin = 92  
+indent = 4
+always_for_in = true
+whitespace_in_kwargs = true
+remove_extra_newlines = true

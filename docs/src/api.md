@@ -1,9 +1,48 @@
-# API Documentation
 
-This section contains the API documentation for all public entities in the KitchenSink module.
+# API Reference
+
+This section provides a detailed reference for all modules, functions, types, and methods available in the `KitchenSink` package.
+
+## Modules
+
+### KSTypes
 
 ```@autodocs
-Modules = [Types]
+modules = [KSTypes]
 ```
 
-Pages = ["api.md"]
+### CoordinateSystems
+
+```@autodocs
+modules = [CoordinateSystems]
+```
+
+### LinearSolvers
+
+```@autodocs
+modules = [LinearSolvers]
+```
+
+### Preconditioners
+
+```@autodocs
+modules = [Preconditioners]
+```
+
+### ProblemTypes
+
+```@autodocs
+modules = [ProblemTypes]
+```
+
+### SpectralMethods
+
+```@autodocs
+modules = [SpectralMethods]
+```
+
+### TimeStepping
+
+```@autodocs
+modules = [TimeStepping]
+```

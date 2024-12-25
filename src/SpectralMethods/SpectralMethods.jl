@@ -1,138 +1,584 @@
 module SpectralMethods
 
-using LinearAlgebra, SparseArrays, FastGaussQuadrature
-using ..KSTypes, ..CoordinateSystems
-# Exported Functions
-export create_legendre_nodes_and_weights, gauss_legendre_with_boundary_nd, barycentric_weights, Lagrange_polynomials
-export barycentric_interpolation, interpolate_nd, derivative_matrix!, kth_derivative_matrix!
-export derivative_matrix_nd, enforce_ck_continuity!, create_basis_functions, is_near_zero
-export scale_derivative_matrix, create_differentiation_matrices, quadrature_matrix!, compute_integral
-export quadrature_matrix_nd, compute_integral_nd, scale_quadrature_matrix!, create_ocfe_mesh
-export map_nodes_to_physical_domain, get_coordinate_range
-"""
-	create_legendre_nodes_and_weights(p::Integer)
+using LinearAlgebra, FastGaussQuadrature, StaticArrays
+using BSplineKit: BSplineBasis, BSplineOrder, KnotVector, evaluate
+using BSplineKit: BSplineKit  # Add this line to import the full module
+using ..KSTypes, ..CoordinateSystems, ..CacheManagement, ..NumericUtilities
 
-Create Legendre nodes and weights for the interval [-1, 1].
+# Exported functions and types
+export create_legendre_nodes_and_weights, gauss_legendre_with_boundary_nd
+export create_standard_ks_cell, get_standard_spectral_properties
+export derivative_matrix!, Lagrange_polynomials, quadrature_matrix, compute_integral
+export kth_derivative_matrix!, barycentric_weights, barycentric_interpolation
+export map_to_reference_cell, add_standard_spectral_properties!, apply_scaling_factors!
+export quadrature_matrix_nd, compute_integral_nd, determine_scaling_factor
+export get_or_create_standard_cell, create_ocfc_mesh, get_or_create_spectral_properties
+export create_node_map, create_tensor_product_mask, derivative_matrix_nd
+export interpolate_solution, is_point_in_cell, interpolate_in_cell, add_standard_cell!
+export compute_quadrature_weights, spectral_jacobian, get_node_coordinates
+export create_basis_functions, spectral_hessian, enforce_ck_continuity_bspline!
+export interpolate_nd, enforce_ck_continuity_spectral!, compute_quadrature_weight
+export get_node_coordinates, is_boundary_node
+const STANDARD_CELL_CACHE = CacheManager{StandardKSCell}(100)
+const SPECTRAL_PROPERTIES_CACHE = CacheManager{StandardSpectralProperties}(100)
 
-Returns:
-- `Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}}`:
-  Nodes with boundary, weights with boundary, interior nodes, interior weights.
-"""
-function create_legendre_nodes_and_weights(p::Integer)
-	p >= 3 || throw(ArgumentError("Polynomial degree p must be at least 3."))
+@doc raw"""
+	create_legendre_nodes_and_weights(p::Int) -> Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}}
 
-	x, w = gausslegendre(p - 2)
-	x_with_boundary = vcat(-1.0, x, 1.0)
-	w_with_boundary = vcat(0.0, w, 0.0)
+Create Legendre-Gauss nodes and weights for a given polynomial order `p`.
 
-	return x_with_boundary, w_with_boundary, x, w
-end
-
-"""
-	gauss_legendre_with_boundary_nd(p::Integer, dim::Integer)
-
-Generate Gauss-Legendre nodes and weights in multiple dimensions with boundary points included.
+Legendre-Gauss quadrature is a method for approximating the integral of a function,
+particularly useful for polynomial functions. The nodes are the roots of the Legendre
+polynomial \( P_p(x) \), and the weights are derived to ensure exact integration for
+polynomials of degree up to \( 2p-1 \).
 
 # Arguments
-- `p::Integer`: The number of points in each dimension (including boundary points).
-- `dim::Integer`: The number of dimensions.
+- `p::Int`: Polynomial order (must be at least 3)
 
 # Returns
-- `Tuple{Vector{Vector{Float64}}, Vector{Float64}, Vector{Vector{Float64}}, Vector{Float64}}`:
-  Nodes with boundary, weights with boundary, interior nodes, interior weights.
+- `Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}}`:
+  (nodes_with_boundary, weights_with_boundary, nodes, weights)
+  - `nodes_with_boundary`: Nodes including the boundary points -1 and 1.
+  - `weights_with_boundary`: Weights including boundary weights (set to 0).
+  - `nodes`: Legendre-Gauss nodes (roots of the Legendre polynomial \( P_p(x) \)).
+  - `weights`: Corresponding weights for the nodes.
+
+# Throws
+- `ArgumentError`: If `p` is less than 3
+
+# Mathematical Description
+The Legendre-Gauss nodes \( x_i \) are the roots of the Legendre polynomial \( P_p(x) \),
+which is defined by the recurrence relation: \[ (n+1)P_{n+1}(x) = (2n+1)xP_n(x) - nP_{n-1}(x)
+\] with initial conditions \( P_0(x) = 1 \) and \( P_1(x) = x \).
+
+The weights \( w_i \) are given by: \[ w_i = \frac{2}{(1 - x_i^2)[P'_p(x_i)]^2} \] where \(
+P'_p(x) \) is the derivative of the Legendre polynomial \( P_p(x) \).
 """
-function gauss_legendre_with_boundary_nd(p::Integer, dim::Integer)
-	p >= 3 || throw(ArgumentError("Polynomial degree p must be at least 3."))
-	dim >= 1 || throw(ArgumentError("Number of dimensions must be at least 1."))
+function create_legendre_nodes_and_weights(p::Int)
+	p < 3 && throw(ArgumentError("Polynomial order p must be at least 3, but got p = $p"))
+	nodes, weights = gausslegendre(p)
+	nodes_with_boundary = vcat(-1.0, nodes, 1.0)
+	weights_with_boundary = vcat(0.0, weights, 0.0)
+	return nodes_with_boundary, weights_with_boundary, nodes, weights
+end
+@doc raw"""
+	gauss_legendre_with_boundary_nd(polynomial_degree::Union{Int, NTuple{N, Int}}; dim::Int = 1) where N -> Tuple
 
-	nodes_1d, weights_1d, nodes_interior_1d, weights_interior_1d = create_legendre_nodes_and_weights(p)
+Create multi-dimensional Gauss-Legendre nodes and weights with boundary points.
 
-	nodes = [collect(coords) for coords in Iterators.product(fill(nodes_1d, dim)...)]
-	weights = [prod(weights_1d[i] for i in indices) for indices in Iterators.product(fill(1:p, dim)...)]
+# Arguments
+- `polynomial_degree::Union{Int, NTuple{N, Int}}`: Polynomial degree(s) for each dimension
+- `dim::Int = 1`: Number of dimensions (default: 1)
 
-	nodes_interior = [collect(coords) for coords in Iterators.product(fill(nodes_interior_1d, dim)...)]
-	weights_interior = [prod(weights_interior_1d[i] for i in indices) for indices in Iterators.product(fill(1:(p - 2), dim)...)]
+# Returns
+- `Tuple`: (nodes, weights, nodes_interior, weights_interior)
+  - `nodes`: Multi-dimensional Gauss-Legendre nodes including boundary points.
+  - `weights`: Multi-dimensional Gauss-Legendre weights including boundary points.
+  - `nodes_interior`: Interior Gauss-Legendre nodes.
+  - `weights_interior`: Interior Gauss-Legendre weights.
 
-	nodes = vec(nodes)
-	weights = vec(weights)
-	nodes_interior = vec(nodes_interior)
-	weights_interior = vec(weights_interior)
+# Throws
+- `ArgumentError`: If dimensions or polynomial degrees are invalid
+
+# Mathematical Description
+For each dimension \( d \), the Gauss-Legendre nodes and weights are computed using the
+Legendre polynomial \( P_{p_d}(x) \). The nodes \( x_i \) are the roots of \( P_{p_d}(x) \),
+and the weights \( w_i \) are given by: \[ w_i = \frac{2}{(1 - x_i^2)[P'_{p_d}(x_i)]^2} \]
+where \( P'_{p_d}(x) \) is the derivative of the Legendre polynomial \( P_{p_d}(x) \).
+
+The multi-dimensional nodes and weights are then formed by taking the tensor product of the
+one-dimensional nodes and weights.
+"""
+function gauss_legendre_with_boundary_nd(
+	polynomial_degree::Union{Int, NTuple{N, Int}};
+	dim::Int = 1,
+) where {N}
+	# Convert polynomial_degree to tuple if single Int
+	p_vec = if isa(polynomial_degree, Int)
+		ntuple(_ -> polynomial_degree, dim)
+	else
+		polynomial_degree
+	end
+
+	# Validate inputs
+	length(p_vec) == dim || throw(DimensionMismatch(
+		"Length of polynomial_degree must match dimension $dim"))
+	all(p_i >= 3 for p_i in p_vec) || throw(ArgumentError(
+		"Polynomial degree must be at least 3 in each dimension"))
+
+	# Generate nodes and weights for each dimension with proper type inference
+	T = eltype(create_legendre_nodes_and_weights(first(p_vec))[1])
+	nodes = Vector{Vector{T}}(undef, dim)
+	weights = Vector{Vector{T}}(undef, dim)
+	nodes_interior = Vector{Vector{T}}(undef, dim)
+	weights_interior = Vector{Vector{T}}(undef, dim)
+
+	for d in 1:dim
+		# Create nodes and weights for this dimension with its specific p value
+		n_d, w_d, n_i_d, w_i_d = create_legendre_nodes_and_weights(p_vec[d])
+
+		# Store with proper dimensioning
+		nodes[d] = reshape(n_d, p_vec[d] + 2)
+		weights[d] = reshape(w_d, p_vec[d] + 2)
+		nodes_interior[d] = reshape(n_i_d, p_vec[d])
+		weights_interior[d] = reshape(w_i_d, p_vec[d])
+	end
+
 	return nodes, weights, nodes_interior, weights_interior
 end
 
-"""
-	barycentric_weights(points::AbstractVector{<:Real})
+@doc raw"""
+	get_or_create_spectral_properties(p::Int, continuity_order::Int = 2) -> StandardSpectralProperties
 
-Compute the barycentric weights for a set of nodes.
+Retrieve or create spectral properties for a given polynomial order and continuity order.
 
 # Arguments
-- `points::AbstractVector{<:Real}`: A vector of nodes.
+- `p::Int`: Polynomial order.
+- `continuity_order::Int = 2`: Continuity order (default: 2).
 
 # Returns
-- `Vector{Float64}`: The barycentric weights corresponding to the nodes.
-"""
-function barycentric_weights(points::AbstractVector{<:Real})
-	n = length(points)
-	n >= 3 || throw(ArgumentError("The length of nodes must be at least 3."))
+- `StandardSpectralProperties`: Spectral properties for the given polynomial and continuity
+  order.
 
-	w = ones(eltype(points), n)
-	for j in 1:n
-		for k in 1:(j - 1)
-			diff = points[j] - points[k]
-			if is_near_zero(diff)
-				w[j] = w[k]
-				break
-			else
-				w[j] /= diff
-				w[k] /= -diff
-			end
+# Throws
+- `ArgumentError`: If the polynomial order or continuity order is invalid.
+
+# Mathematical Description
+The spectral properties include:
+- Legendre-Gauss nodes and weights, both with and without boundary points.
+- Differentiation matrices \( D \) for the given polynomial order \( p \).
+- Quadrature matrix \( Q \) derived from the weights.
+
+The differentiation matrix \( D \) is computed such that: \[ D_{ij} =
+\frac{P'_p(x_i)}{P_p(x_i)} \] where \( P_p(x) \) is the Legendre polynomial of order \( p \).
+
+The quadrature matrix \( Q \) is a diagonal matrix with the weights \( w_i \) on the
+diagonal: \[ Q_{ii} = w_i \]
+"""
+function get_or_create_spectral_properties(p::Int, continuity_order::Int = 2)
+	key = (p, continuity_order)
+	return get_or_create_cached_item(SPECTRAL_PROPERTIES_CACHE, key) do
+		nodes_with_boundary, weights_with_boundary, nodes_interior, weights_interior = create_legendre_nodes_and_weights(
+			p
+		)
+		D_with_boundary, D_interior = derivative_matrix!(p)
+		quadrature_matrix_val = quadrature_matrix(weights_interior)
+		D_matrices_with_boundary, D_matrices_interior = kth_derivative_matrix!(
+			p, max(1, continuity_order)
+		)
+		higher_order_diff_matrices_with_boundary = D_matrices_with_boundary[1:continuity_order]
+		higher_order_diff_matrices_interior = D_matrices_interior[1:continuity_order]
+		StandardSpectralProperties(;
+			p = p,
+			continuity_order = continuity_order,
+			nodes_with_boundary = nodes_with_boundary,
+			nodes_interior = nodes_interior,
+			weights_with_boundary = weights_with_boundary,
+			weights_interior = weights_interior,
+			differentiation_matrix_with_boundary = D_with_boundary,
+			differentiation_matrix_interior = D_interior,
+			quadrature_matrix = quadrature_matrix_val,
+			higher_order_diff_matrices_with_boundary = higher_order_diff_matrices_with_boundary,
+			higher_order_diff_matrices_interior = higher_order_diff_matrices_interior,
+		)
+	end
+end
+
+@doc raw"""
+	add_standard_cell!(cell::StandardKSCell)
+
+Add a standard cell to the global set of standard cells.
+````
+# Arguments
+- `cell::StandardKSCell`: The standard cell to add.
+
+# Throws
+- `ArgumentError`: If the cell already exists in the global set.
+"""
+function add_standard_cell!(cell::StandardKSCell)
+	# Create key from cell's properties
+	key = (cell.p, cell.level, cell.continuity_order)
+
+	# Check if key exists in cache
+	if haskey(STANDARD_CELL_CACHE.items, key)
+		throw(
+			ArgumentError(
+				"Standard cell with p=$(cell.p), level=$(cell.level), and continuity_order=$(cell.continuity_order) already exists."
+			),
+		)
+	end
+
+	# Add to cache
+	STANDARD_CELL_CACHE.items[key] = cell
+	return cell
+end
+
+@doc raw"""
+	get_or_create_standard_cell(p::NTuple{N, Int}, level::Int; continuity_order::NTuple{N, Int} = ntuple(_ -> 2, N)) where N -> StandardKSCell
+
+Retrieve or create a standard cell for given polynomial degrees, level, and continuity order.
+
+# Arguments
+- `p::NTuple{N, Int}`: Polynomial degrees for each dimension.
+- `level::Int`: Refinement level.
+- `continuity_order::NTuple{N, Int} = ntuple(_ -> 2, N)`: Continuity order for each dimension
+  (default: 2).
+
+# Returns
+- `StandardKSCell`: The standard cell for the given parameters.
+
+# Throws
+- `ArgumentError`: If the polynomial degrees, level, or continuity order are invalid.
+
+# Mathematical Description
+A standard cell is defined by its polynomial degrees \( p \), refinement level \( l \), and
+continuity order \( k \). The polynomial degrees determine the order of the basis functions
+used within the cell. The continuity order specifies the smoothness of the basis functions
+across cell boundaries.
+
+The standard cell is created using the function `create_standard_ks_cell`, which generates
+the necessary spectral properties and basis functions for the cell.
+"""
+function get_or_create_standard_cell(
+	p::NTuple{N, Int}, level::Int; continuity_order::NTuple{N, Int} = ntuple(_ -> 1, N)
+) where {N}
+	all(p_i >= 1 for p_i in p) ||
+		throw(ArgumentError("All polynomial degrees must be at least 1"))
+	level >= 1 || throw(ArgumentError("Level must be at least 1"))
+	all(k >= 0 for k in continuity_order) ||
+		throw(ArgumentError("Continuity order must be non-negative"))
+
+	key = (p, level, continuity_order)
+
+	# Create a parametric standard cell
+	return get_or_create_cached_item(STANDARD_CELL_CACHE, key) do
+		create_standard_ks_cell(p, level, length(p); continuity_order = continuity_order)
+	end
+end
+@doc raw"""
+	create_standard_ks_cell(p::NTuple{N, Int}, level::Int, dim::Int; continuity_order::NTuple{N, Int} = ntuple(_ -> 2, N)) where N -> StandardKSCell
+
+Create a standard KS cell for given polynomial degrees, level, dimensions, and continuity
+order.
+
+# Arguments
+- `p::NTuple{N, Int}`: Polynomial degrees for each dimension.
+- `level::Int`: Refinement level.
+- `dim::Int`: Number of dimensions.
+- `continuity_order::NTuple{N, Int} = ntuple(_ -> 2, N)`: Continuity order for each dimension
+  (default: 2).
+
+# Returns
+- `StandardKSCell`: The created standard KS cell.
+
+# Mathematical Description
+A standard KS cell is created by scaling the nodes and weights based on the refinement level.
+The differentiation matrices and quadrature matrix are also scaled accordingly.
+
+The scaling factor for the refinement level \( l \) is given by: \[
+\text{level\_scale\_factor} = 2^{(-l + 1)} \]
+
+The nodes and weights are scaled as: \[ \text{nodes\_with\_boundary} =
+\text{nodes\_with\_boundary} \times \text{level\_scale\_factor} \] \[
+\text{weights\_with\_boundary} = \text{weights\_with\_boundary} \times
+\text{level\_scale\_factor} \]
+
+The differentiation matrices are scaled as: \[ D_{\text{with\_boundary}} =
+\frac{D_{\text{with\_boundary}}}{\text{level\_scale\_factor}} \] \[ D_{\text{interior}} =
+\frac{D_{\text{interior}}}{\text{level\_scale\_factor}} \]
+
+The quadrature matrix is scaled as: \[ Q = Q \times \text{level\_scale\_factor} \]
+
+Higher-order differentiation matrices are scaled as: \[ D_{\text{higher\_order}} =
+\frac{D_{\text{higher\_order}}}{\text{level\_scale\_factor}^k} \] where \( k \) is the order
+of the differentiation matrix.
+"""
+function create_standard_ks_cell(
+	p::NTuple{N, Int},
+	level::Int,
+	dim::Int;
+	continuity_order::NTuple{N, Int} = ntuple(_ -> 2, N)) where {N}
+	spectral_props = ntuple(
+		d -> get_or_create_spectral_properties(p[d], continuity_order[d]), dim)
+
+	# Scale the nodes based on the refinement level
+	level_scale_factor = 2.0^(-level + 1)
+
+	nodes_with_boundary = ntuple(
+		d -> spectral_props[d].nodes_with_boundary * level_scale_factor, dim)
+	nodes_interior = ntuple(d -> spectral_props[d].nodes_interior * level_scale_factor, dim)
+	weights_with_boundary = ntuple(
+		d -> spectral_props[d].weights_with_boundary * level_scale_factor, dim)
+	weights_interior = ntuple(
+		d -> spectral_props[d].weights_interior * level_scale_factor, dim)
+
+	differentiation_matrix_with_boundary = ntuple(
+		d -> spectral_props[d].differentiation_matrix_with_boundary / level_scale_factor,
+		dim,
+	)
+	differentiation_matrix_interior = ntuple(
+		d -> spectral_props[d].differentiation_matrix_interior / level_scale_factor,
+		dim,
+	)
+	quadrature_matrix_val = ntuple(
+		d -> spectral_props[d].quadrature_matrix * level_scale_factor, dim)
+
+	higher_order_diff_matrices_with_boundary = ntuple(
+		d -> [
+			m / (level_scale_factor^k)
+			for (k, m) in
+			enumerate(spectral_props[d].higher_order_diff_matrices_with_boundary)
+		],
+		dim,
+	)
+	higher_order_diff_matrices_interior = ntuple(
+		d -> [
+			m / (level_scale_factor^k)
+			for
+			(k, m) in enumerate(spectral_props[d].higher_order_diff_matrices_interior)
+		],
+		dim,
+	)
+
+	return StandardKSCell(;
+		p = p,
+		level = level,
+		continuity_order = continuity_order,
+		nodes_with_boundary = nodes_with_boundary,
+		nodes_interior = nodes_interior,
+		weights_with_boundary = weights_with_boundary,
+		weights_interior = weights_interior,
+		differentiation_matrix_with_boundary = differentiation_matrix_with_boundary,
+		differentiation_matrix_interior = differentiation_matrix_interior,
+		quadrature_matrix = quadrature_matrix_val,
+		higher_order_diff_matrices_with_boundary = higher_order_diff_matrices_with_boundary,
+		higher_order_diff_matrices_interior = higher_order_diff_matrices_interior,
+	)
+end
+@doc raw"""
+	derivative_matrix!(p::Int; tol::Float64 = 1e-12) -> Tuple{Matrix{Float64}, Matrix{Float64}}
+
+Compute the derivative matrix for Legendre polynomials of order `p`.
+
+# Arguments
+- `p::Int`: Polynomial order.
+- `tol::Float64 = 1e-12`: Tolerance for numerical comparisons.
+
+# Returns
+- `Tuple{Matrix{Float64}, Matrix{Float64}}`: (D_with_boundary, D_interior)
+
+# Mathematical Description
+The derivative matrix \( D \) for Legendre polynomials is computed using barycentric
+interpolation. For nodes \( x_i \) and barycentric weights \( w_i \), the off-diagonal
+elements of the derivative matrix are given by: \[ D_{ij} = \frac{w_j}{w_i (x_i - x_j)} \quad
+\text{for} \quad i \neq j \]
+
+The diagonal elements are computed to ensure that the sum of each row is zero: \[ D_{ii} =
+-\sum_{j \neq i} D_{ij} \]
+
+The function returns two matrices:
+- `D_with_boundary`: Derivative matrix including boundary points.
+- `D_interior`: Derivative matrix for interior points.
+"""
+function derivative_matrix!(p::Int; tol::Float64 = 1e-12)
+	nodes_with_boundary, _, nodes_interior, _ = create_legendre_nodes_and_weights(p)
+
+	barycentric_weights_with_boundary = barycentric_weights(nodes_with_boundary)
+	barycentric_weights_interior = barycentric_weights(nodes_interior)
+
+	recip_weights_with_boundary = 1 ./ barycentric_weights_with_boundary
+	recip_weights_interior = 1 ./ barycentric_weights_interior
+
+	node_diffs_with_boundary = [
+		nodes_with_boundary[i] - nodes_with_boundary[j]
+		for i in 1:(p + 2), j in 1:(p + 2)
+	]
+	node_diffs_interior = [nodes_interior[i] - nodes_interior[j] for i in 1:p, j in 1:p]
+
+	D_with_boundary = zeros(p + 2, p + 2)
+	D_interior = zeros(p, p)
+
+	for i in 1:(p + 2), j in 1:(p + 2)
+		if i != j
+			D_with_boundary[i, j] =
+				barycentric_weights_with_boundary[j] *
+				recip_weights_with_boundary[i] /
+				node_diffs_with_boundary[i, j]
 		end
 	end
-	return w
+
+	for i in 1:p, j in 1:p
+		if i != j
+			D_interior[i, j] =
+				barycentric_weights_interior[j] * recip_weights_interior[i] /
+				node_diffs_interior[i, j]
+		end
+	end
+
+	for i in 1:(p + 2)
+		D_with_boundary[i, i] = -sum(D_with_boundary[i, j] for j in 1:(p + 2) if j != i)
+	end
+
+	for i in 1:p
+		D_interior[i, i] = -sum(D_interior[i, j] for j in 1:p if j != i)
+	end
+
+	return D_with_boundary, D_interior
 end
+@doc raw"""
+	kth_derivative_matrix!(p::Int, k_max::Int; tol::Float64 = 1e-12, max_condition_number::Float64 = 1e20) -> Tuple{Vector{Matrix{Float64}}, Vector{Matrix{Float64}}}
 
-"""
-	Lagrange_polynomials(points::AbstractVector{<:Real})
-
-Construct Lagrange polynomials based on the given points.
+Compute the kth derivative matrices up to `k_max` for Legendre polynomials of order `p`.
 
 # Arguments
-- `points::AbstractVector{<:Real}`: A vector of nodes.
+- `p::Int`: Polynomial order.
+- `k_max::Int`: Maximum derivative order.
+- `tol::Float64 = 1e-12`: Tolerance for numerical comparisons.
+- `max_condition_number::Float64 = 1e20`: Maximum allowed condition number.
 
 # Returns
-- `SparseMatrixCSC{Float64, Int}`: The sparse matrix representing the Lagrange polynomials.
+- `Tuple{Vector{Matrix{Float64}}, Vector{Matrix{Float64}}}`: (D_matrices_with_boundary,
+  D_matrices_interior)
+
+# Throws
+- `ArgumentError`: If the condition number exceeds `max_condition_number`.
+
+# Mathematical Description
+The kth derivative matrix \( D^{(k)} \) is computed iteratively using the first derivative
+matrix \( D \): \[ D^{(k)} = (D^{(k-1)}) \cdot D \]
+
+The condition number of the resulting matrix is checked to ensure numerical stability. If the
+condition number exceeds `max_condition_number`, the function throws an `ArgumentError`.
+
+The function returns two vectors of matrices:
+- `D_matrices_with_boundary`: kth derivative matrices including boundary points.
+- `D_matrices_interior`: kth derivative matrices for interior points.
 """
-function Lagrange_polynomials(points::AbstractVector{<:Real})
-	n = length(points)
-	n >= 3 || throw(ArgumentError("The length of nodes must be at least 3."))
-	return sparse(1:n, 1:n, ones(Float64, n))
+function kth_derivative_matrix!(
+	p::Int,
+	k_max::Int;
+	tol::Float64 = 1e-12,
+	max_condition_number::Float64 = 1e20,
+)
+	D_with_boundary, D_interior = derivative_matrix!(p; tol = tol)
+
+	D_matrices_with_boundary = [D_with_boundary]
+	D_matrices_interior = [D_interior]
+
+	for k in 2:min(k_max, p)  # Limit k_max to p to avoid ill-conditioning
+		D_with_boundary_k = D_matrices_with_boundary[end] * D_with_boundary
+		D_interior_k = D_matrices_interior[end] * D_interior
+
+		cond_with_boundary = cond(D_with_boundary_k)
+		cond_interior = cond(D_interior_k)
+
+		# if cond_with_boundary > max_condition_number || cond_interior >
+		# max_condition_number throw(ArgumentError("Condition number exceeds
+		#   max_condition_number at order $k")) end
+
+		push!(D_matrices_with_boundary, D_with_boundary_k)
+		push!(D_matrices_interior, D_interior_k)
+	end
+
+	return D_matrices_with_boundary, D_matrices_interior
 end
 
+@doc raw"""
+	barycentric_weights(nodes::Vector{T}) where T <: AbstractFloat -> Vector{T}
+
+Compute barycentric weights for given nodes.
+
+# Arguments
+- `nodes::Vector{T}`: Vector of node positions.
+
+# Returns
+- `Vector{T}`: Barycentric weights.
+
+# Throws
+- `ArgumentError`: If the number of nodes is less than 3.
+
+# Mathematical Description
+Barycentric weights \( w_i \) for nodes \( x_i \) are computed as: \[ w_i = \frac{1}{\prod_{j
+\neq i} (x_i - x_j)} \]
+
+These weights are used in barycentric interpolation to compute the interpolating polynomial
+efficiently.
 """
-	barycentric_interpolation(points::AbstractVector{<:Real}, values::AbstractVector{<:Real}, x::Real)
+function barycentric_weights(nodes::Vector{T}) where {T <: AbstractFloat}
+	length(nodes) < 3 && throw(ArgumentError("The number of nodes must be at least 3"))
+	n = length(nodes)
+	weights = ones(T, n)
+	for j in 1:n
+		for k in 1:n
+			if j != k
+				weights[j] *= (nodes[j] - nodes[k])
+			end
+		end
+		weights[j] = 1 / weights[j]
+	end
+	return weights
+end
+
+@doc raw"""
+	barycentric_interpolation(points::AbstractVector{T}, values::AbstractVector{S}, x; tol::Real = 1e-14) where {T <: Real, S <: Real} -> S
 
 Perform barycentric interpolation at a given point.
 
 # Arguments
-- `points::AbstractVector{<:Real}`: A vector of nodes.
-- `values::AbstractVector{<:Real}`: A vector of values corresponding to the nodes.
-- `x::Real`: The point at which to interpolate.
+- `points::AbstractVector{T}`: Vector of interpolation points.
+- `values::AbstractVector{S}`: Vector of function values at the interpolation points.
+- `x`: The point at which to interpolate.
+- `tol::Real = 1e-14`: Tolerance for numerical comparisons (default: 1e-14).
 
 # Returns
-- `Float64`: The interpolated value.
-"""
-function barycentric_interpolation(points::AbstractVector{<:Real}, values::AbstractVector{<:Real}, x::Real)
-	n = length(points)
-	n == length(values) || throw(ArgumentError("points and values must have the same length"))
-	n >= 3 || throw(ArgumentError("At least 3 points are required for interpolation"))
+- `S`: Interpolated value at the given point.
 
+# Mathematical Description
+Barycentric interpolation is a method of polynomial interpolation that avoids the numerical
+instability of other interpolation methods. Given interpolation points \( x_i \) and
+corresponding function values \( f_i \), the interpolated value \( f(x) \) at a point \( x \)
+is computed as:
+
+\[ f(x) = \frac{\sum_{j=1}^{n} \frac{w_j}{x - x_j} f_j}{\sum_{j=1}^{n} \frac{w_j}{x - x_j}}
+\]
+
+where \( w_j \) are the barycentric weights, defined as:
+
+\[ w_j = \frac{1}{\prod_{k \neq j} (x_j - x_k)} \]
+
+If \( x \) exactly matches one of the interpolation points \( x_i \), the function returns
+the corresponding function value \( f_i \) to avoid division by zero.
+
+# Throws
+- `ArgumentError`: If the number of points and values do not match.
+
+# Example
+```julia
+points = [0.0, 1.0, 2.0]
+values = [1.0, 2.0, 0.0]
+x = 1.5
+interpolated_value = barycentric_interpolation(points, values, x)
+```
+"""
+function barycentric_interpolation(
+	points::AbstractVector{T},
+	values::AbstractVector{S},
+	x;
+	tol::Real = 1e-14,
+) where {T <: Real, S <: Real}
 	weights = barycentric_weights(points)
-	numerator = zero(eltype(values))
-	denominator = zero(eltype(points))
+	n = length(points)
+	numerator = zero(promote_type(T, S))
+	denominator = zero(T)
+
+	exact_match = findfirst(p -> abs(x - p) < tol, points)
+	if exact_match !== nothing
+		return values[exact_match]
+	end
 
 	for j in 1:n
 		diff = x - points[j]
-		if iszero(diff)
+		if abs(diff) < tol
 			return values[j]
 		end
 		t = weights[j] / diff
@@ -140,660 +586,1269 @@ function barycentric_interpolation(points::AbstractVector{<:Real}, values::Abstr
 		denominator += t
 	end
 
-	return numerator / denominator
+	result = numerator / denominator
+	return abs(result) < eps(typeof(result)) ? zero(result) : result
 end
+@doc raw"""
+	quadrature_matrix(weights::AbstractVector) -> Diagonal{T, Vector{T}} where T
 
-"""
-	interpolate_nd(nodes::AbstractVector{<:AbstractVector{<:Real}}, values::AbstractArray, point::AbstractVector{<:Real})
-
-Perform N-dimensional barycentric interpolation at a given point.
+Create a quadrature matrix from given weights.
 
 # Arguments
-- `nodes::AbstractVector{<:AbstractVector{<:Real}}`: A vector of vectors, each representing nodes in a particular dimension.
-- `values::AbstractArray`: The values corresponding to the nodes.
-- `point::AbstractVector{<:Real}`: The point at which to interpolate.
+- `weights::AbstractVector`: Vector of quadrature weights.
 
 # Returns
-- `Float64`: The interpolated value.
-"""
-function interpolate_nd(nodes::AbstractVector{<:AbstractVector{<:Real}}, values::AbstractArray, point::AbstractVector{<:Real})
-	dim = length(nodes)
-	length(point) == dim || throw(ArgumentError("The number of dimensions in nodes must match the point dimensions."))
+- `Diagonal{T, Vector{T}}`: Diagonal matrix with the weights on the diagonal.
 
-	function interpolate_recursive(current_dim::Int, indices::NTuple{N, Int}) where N
-		if current_dim > dim
-			return values[indices...]
-		end
-		interp_vals = [interpolate_recursive(current_dim + 1, ntuple(k -> k == current_dim ? i : indices[k], dim)) for i in 1:length(nodes[current_dim])]
-		return barycentric_interpolation(nodes[current_dim], interp_vals, point[current_dim])
+# Mathematical Description
+The quadrature matrix \( Q \) is a diagonal matrix where the diagonal elements are the
+quadrature weights \( w_i \): \[ Q_{ii} = w_i \] This matrix is used to perform numerical
+integration by matrix multiplication.
+"""
+function quadrature_matrix(weights::AbstractVector)
+	return Diagonal(weights)
+end
+
+@doc raw"""
+	compute_integral(weights::AbstractVector, values::AbstractVector) -> Float64
+
+Compute the integral of a function given its values and quadrature weights.
+
+# Arguments
+- `weights::AbstractVector`: Vector of quadrature weights.
+- `values::AbstractVector`: Vector of function values at the quadrature nodes.
+
+# Returns
+- `Float64`: The computed integral.
+
+# Mathematical Description
+The integral \( I \) of a function \( f(x) \) can be approximated using quadrature weights \(
+w_i \) and function values \( f(x_i) \) at the quadrature nodes \( x_i \): \[ I \approx
+\sum_{i} w_i f(x_i) \] This is computed as the dot product of the weights and the values: \[
+I = \mathbf{w} \cdot \mathbf{f} \]
+"""
+function compute_integral(weights::AbstractVector, values::AbstractVector)
+	return dot(weights, values)
+end
+
+@doc raw"""
+	compute_integral_nd(values::AbstractArray, quad_matrices::NTuple{N, AbstractMatrix}) where N -> Float64
+
+Compute the multi-dimensional integral of a function given its values and quadrature
+matrices.
+
+# Arguments
+- `values::AbstractArray`: Array of function values at the quadrature nodes.
+- `quad_matrices::NTuple{N, AbstractMatrix}`: Tuple of quadrature matrices for each
+  dimension.
+
+# Returns
+- `Float64`: The computed multi-dimensional integral.
+
+# Throws
+- `DimensionMismatch`: If the number of dimensions in values does not match the number of
+  quadrature matrices.
+
+# Mathematical Description
+The multi-dimensional integral \( I \) of a function \( f(\mathbf{x}) \) over an
+N-dimensional domain can be approximated using quadrature matrices \( Q_d \) for each
+dimension \( d \): \[ I \approx \sum_{i_1} \sum_{i_2} \cdots \sum_{i_N} Q_{i_1} Q_{i_2}
+\cdots Q_{i_N} f(x_{i_1}, x_{i_2}, \ldots, x_{i_N}) \]
+
+This is computed by iteratively applying the quadrature matrices to the function values: \[
+\mathbf{F} = Q_1 \mathbf{F} \] \[ \mathbf{F} = Q_2 \mathbf{F} \] \[ \vdots \] \[ \mathbf{F} =
+Q_N \mathbf{F} \]
+
+The final result is a scalar value representing the integral.
+"""
+function compute_integral_nd(
+	values::AbstractArray,
+	quad_matrices::NTuple{N, AbstractMatrix},
+) where {N}
+	if ndims(values) != N
+		throw(
+			DimensionMismatch(
+				"The number of dimensions in values ($(ndims(values))) does not match the number of quadrature matrices ($N)"
+			),
+		)
 	end
 
-	return interpolate_recursive(1, ntuple(_ -> 1, dim))
+	result = values
+	for (dim, Q) in enumerate(quad_matrices)
+		result = dropdims(sum(Q * reshape(result, size(Q, 2), :); dims = 1); dims = 1)
+		result = reshape(result, size(values)[(dim + 1):end]...)
+	end
+
+	return result[]  # Return the scalar value
 end
+@doc raw"""
+	interpolate_nd(standard_cell::StandardKSCell{T, N}, values::AbstractArray{T}, point::NTuple{N, T}) where {T <: Real, N} -> T
 
-"""
-	derivative_matrix!(points::AbstractVector{<:Real})
-
-Construct the first derivative matrix for a set of nodes.
+Interpolate the solution at a given point in the standard cell.
 
 # Arguments
-- `points::AbstractVector{<:Real}`: A vector of nodes.
+- `standard_cell::StandardKSCell{T, N}`: The standard cell containing the solution.
+- `values::AbstractArray{T}`: Array of solution values at the cell nodes.
+- `point::NTuple{N, T}`: The point at which to interpolate.
 
 # Returns
-- `SparseMatrixCSC{Float64, Int}`: The sparse first derivative matrix.
+- `T`: Interpolated value at the given point.
+
+# Throws
+- `ArgumentError`: If the interpolation point is outside the reference cell bounds.
+
+# Mathematical Description
+The interpolation is performed using barycentric interpolation. For each dimension \( d \),
+the interpolation at point \( x_d \) is computed as: \[ f(x_d) = \sum_{i} \frac{w_i}{x_d -
+x_i} f(x_i) \] where \( w_i \) are the barycentric weights and \( x_i \) are the nodes.
+
+The interpolation is performed recursively for each dimension until the final interpolated
+value is obtained.
+
+# Example
+```julia
+standard_cell = StandardKSCell{Float64, 2}(...)
+values = rand(4, 4)  # Example values at the cell nodes
+point = (0.5, 0.5)  # Point at which to interpolate
+interpolated_value = interpolate_nd(standard_cell, values, point)
 """
-function derivative_matrix!(points::AbstractVector{<:Real})
-	n = length(points)
-	n >= 3 || throw(ArgumentError("The length of points must be at least 3."))
+function interpolate_nd(
+	standard_cell::StandardKSCell{T, N},
+	values::AbstractArray{T},
+	point::NTuple{N, T},
+) where {T, N}
+	# Check if the point is within the bounds of the standard cell
+	for dim in 1:N
+		min_bound, max_bound = extrema(standard_cell.nodes_with_boundary[dim])
+		(min_bound <= point[dim] <= max_bound) || throw(
+			ArgumentError(
+				"Interpolation point must be within the reference cell bounds for dimension $dim: [$min_bound, $max_bound]"
+			),
+		)
+	end
 
-	D = spzeros(eltype(points), n, n)
-	w = barycentric_weights(points)
-
-	for i in 1:n
-		for j in 1:n
-			if i != j
-				diff = points[i] - points[j]
-				if !is_near_zero(diff)
-					D[i, j] = w[j] / (w[i] * diff)
-				end
-			end
+	function interpolate_recursive(current_dim::Int, indices::Vector{Int})
+		if current_dim > N
+			return values[CartesianIndex(Tuple(indices))]
 		end
-		D[i, i] = -sum(D[i, k] for k in 1:n if k != i)
+		nodes = standard_cell.nodes_with_boundary[current_dim]
+		interp_vals = [
+			begin
+				new_indices = copy(indices)
+				new_indices[current_dim] = i
+				interpolate_recursive(current_dim + 1, new_indices)
+			end
+			for i in 1:length(nodes)
+		]
+		return barycentric_interpolation(collect(nodes), interp_vals, point[current_dim])
+	end
+
+	result = interpolate_recursive(1, ones(Int, N))
+	return isapprox(result, zero(T); atol = eps(T)) ? zero(T) : result
+end
+@doc raw"""
+	interpolate_solution(mesh::KSMesh{T, N}, u::AbstractVector{T}, point::AbstractVector{T}) where {T <: Real, N} -> T
+
+Interpolate the solution at a given point in the mesh.
+
+# Arguments
+- `mesh::KSMesh{T, N}`: The mesh containing the solution.
+- `u::AbstractVector{T}`: Vector of solution values at the mesh nodes.
+- `point::AbstractVector{T}`: The point at which to interpolate.
+
+# Returns
+- `T`: Interpolated value at the given point.
+
+# Throws
+- `ArgumentError`: If the point is not found in any cell of the mesh.
+
+# Mathematical Description
+The interpolation is performed by first identifying the cell that contains the point. Once
+the cell is identified, the interpolation is performed using the `interpolate_in_cell`
+function, which uses barycentric interpolation within the cell.
+
+The interpolation within the cell is computed as: \[ f(\mathbf{x}) = \sum_{i}
+\frac{w_i}{\mathbf{x} - \mathbf{x}_i} f(\mathbf{x}_i) \] where \( w_i \) are the barycentric
+weights and \( \mathbf{x}_i \) are the nodes within the cell.
+"""
+function interpolate_solution(
+	mesh::KSMesh{T, N},
+	u::AbstractVector{T},
+	point::AbstractVector{T},
+) where {T, N}
+	# First find the cell containing the point
+	point_tuple = tuple(point...)
+
+	for cell in mesh.cells
+		if is_point_in_cell(cell, point, mesh)
+			# Get the standard cell
+			standard_cell = get_or_create_standard_cell(
+				cell.p,
+				cell.level;
+				continuity_order = cell.continuity_order,
+			)
+
+			# Map point to reference coordinates
+			ref_coords = get_node_coordinates(
+				mesh.coord_system, cell, point, mesh.num_cells_per_dim
+			)
+
+			# Reshape solution values for the cell
+			cell_values = reshape(
+				@view(u[collect(values(cell.node_map))]),
+				ntuple(i -> cell.p[i] + 2, N),
+			)
+
+			# Perform interpolation in reference coordinates
+			return interpolate_nd(standard_cell, cell_values, ref_coords)
+		end
+	end
+	throw(ArgumentError("Point $point not found in any cell of the mesh"))
+end
+
+
+@doc raw"""
+	is_point_in_cell(cell::KSCell{T, N}, point::AbstractVector{T}, mesh::KSMesh{T, N}) where {T <: Real, N} -> Bool
+
+Check if a point is within the bounds of a given cell in the mesh.
+
+# Arguments
+- `cell::KSCell{T, N}`: The cell to check.
+- `point::AbstractVector{T}`: The point to check.
+- `mesh::KSMesh{T, N}`: The mesh containing the cell.
+
+# Returns
+- `Bool`: `true` if the point is within the cell bounds and the cell is a leaf and not
+  fictitious, `false` otherwise.
+
+# Mathematical Description
+The function checks if the point \( \mathbf{x} \) lies within the bounds of the cell. The
+cell bounds are defined by the minimum and maximum coordinates of the cell corners: \[
+\text{cell\_min} = \min(\text{cell\_corners}) \] \[ \text{cell\_max} =
+\max(\text{cell\_corners}) \]
+
+The point is within the cell if: \[ \text{cell\_min} \leq \mathbf{x} \leq \text{cell\_max} \]
+
+Additionally, the cell must be a leaf, not fictitious, and the point must lie within the
+physical domain of the mesh.
+"""
+function is_point_in_cell(
+	cell::KSCell{T, N},
+	point::AbstractVector{T},
+	mesh::KSMesh{T, N},
+) where {T, N}
+	cell_corners = get_cell_corners(cell)
+	cell_min = minimum(cell_corners)
+	cell_max = maximum(cell_corners)
+
+	in_bounds = all(x -> isapprox(x, true; atol = eps(T)), cell_min .<= point .<= cell_max)
+	return in_bounds && cell.is_leaf && !cell.is_fictitious && mesh.physical_domain(point)
+end
+
+@doc raw"""
+	interpolate_in_cell(cell::KSCell{T, N}, u::AbstractVector{T}, point::AbstractVector{T}, mesh::KSMesh{T, N}) where {T <: Real, N} -> T
+
+Interpolate the solution at a given point within a cell.
+
+# Arguments
+- `cell::KSCell{T, N}`: The cell containing the solution.
+- `u::AbstractVector{T}`: Vector of solution values at the cell nodes.
+- `point::AbstractVector{T}`: The point at which to interpolate.
+- `mesh::KSMesh{T, N}`: The mesh containing the cell.
+
+# Returns
+- `T`: Interpolated value at the given point.
+
+# Mathematical Description
+The interpolation is performed using barycentric interpolation within the standard cell. The
+steps are:
+1. Map the point to the standard cell coordinates.
+2. Reshape the solution values to match the standard cell structure.
+3. Perform the interpolation using the `interpolate_nd` function.
+
+The mapping to the standard cell coordinates is given by: \[ \text{local\_coords} = \frac{2
+(\mathbf{point} - \text{cell\_min})}{\text{cell\_max} - \text{cell\_min}} - 1 \]
+
+The interpolation within the standard cell is computed as: \[ f(\mathbf{x}) = \sum_{i}
+\frac{w_i}{\mathbf{x} - \mathbf{x}_i} f(\mathbf{x}_i) \] where \( w_i \) are the barycentric
+weights and \( \mathbf{x}_i \) are the nodes within the cell.
+"""
+function interpolate_in_cell(
+	cell::KSCell{T, N},
+	u::AbstractVector{T},
+	point::AbstractVector{T},
+	mesh::KSMesh{T, N},
+) where {T, N}
+	standard_cell = get_or_create_standard_cell(
+		cell.p,
+		cell.level;
+		continuity_order = cell.continuity_order,
+	)
+	local_coords = get_node_coordinates(
+		mesh.coord_system, cell, point, mesh.num_cells_per_dim
+	)
+	cell_values = reshape(
+		@view(u[collect(values(cell.node_map))]), ntuple(i -> cell.p[i] + 2, N))
+	return interpolate_nd(standard_cell, cell_values, local_coords)
+end
+
+@doc raw"""
+	create_tensor_product_mask(p_vec::NTuple{N, Int}, continuity_order::NTuple{N, Int}, is_boundary::Bool, is_fictitious::Bool, dim::Int) where N -> NTuple{N, BitVector}
+
+Create a tensor product mask for a given polynomial degree vector, continuity order, boundary
+status, and dimension.
+
+# Arguments
+- `p_vec::NTuple{N, Int}`: Polynomial degrees for each dimension.
+- `continuity_order::NTuple{N, Int}`: Continuity order for each dimension.
+- `is_boundary::Bool`: Whether the cell is on the boundary.
+- `is_fictitious::Bool`: Whether the cell is fictitious.
+- `dim::Int`: Number of dimensions.
+
+# Returns
+- `NTuple{N, BitVector}`: Tensor product mask.
+
+# Mathematical Description
+The tensor product mask is created by iterating over each dimension and setting the mask
+values based on the continuity order and boundary status. For each dimension \( d \):
+- If the cell is on the boundary, the mask values at the boundaries are set to `false` based
+  on the continuity order.
+- If the cell is fictitious, the mask values for the interior points are set to `false`.
+
+The resulting mask is a tuple of bit vectors, where each bit vector represents the mask for
+one dimension.
+
+# Logical Operations
+- The mask values are initialized to `true` for all points.
+- For boundary cells, the mask values at the boundaries are set to `false`: \[
+  \text{mask}[d][1:\min(\text{continuity\_order}[d], p\_vec[d])] \leftarrow \text{false} \]
+  \[ \text{mask}[d][(\text{end} - \min(\text{continuity\_order}[d], p\_vec[d]) +
+  1):\text{end}] \leftarrow \text{false} \]
+- For fictitious cells, the mask values for the interior points are set to `false`: \[
+  \text{mask}[d][2:(\text{end} - 1)] \leftarrow \text{false} \]
+"""
+function create_tensor_product_mask(
+	p_vec::NTuple{N, Int},
+	continuity_order::NTuple{N, Int},
+	is_boundary::Bool,
+	is_fictitious::Bool,
+	dim::Int,
+) where {N}
+	mask = ntuple(d -> trues(p_vec[d] + 2), dim)
+	for d in 1:dim
+		if is_boundary
+			mask[d][1:min(continuity_order[d], p_vec[d])] .= false
+			mask[d][(end - min(continuity_order[d], p_vec[d]) + 1):end] .= false
+		else
+			mask[d][1:min(continuity_order[d], p_vec[d])] .= false
+			mask[d][(end - min(continuity_order[d], p_vec[d]) + 1):end] .= false
+		end
+		if is_fictitious
+			mask[d][2:(end - 1)] .= false
+		end
+	end
+	return mask
+end
+
+@doc raw"""
+	quadrature_matrix_nd(weights_tuple::NTuple{N, AbstractVector}) where N -> NTuple{N, Diagonal{T, Vector{T}}} where T
+
+Create multi-dimensional quadrature matrices from given weights.
+
+# Arguments
+- `weights_tuple::NTuple{N, AbstractVector}`: Tuple of quadrature weights for each dimension.
+
+# Returns
+- `NTuple{N, Diagonal{T, Vector{T}}}`: Tuple of diagonal matrices with the weights on the
+  diagonal for each dimension.
+
+# Mathematical Description
+The quadrature matrix \( Q \) for each dimension is a diagonal matrix where the diagonal
+elements are the quadrature weights \( w_i \): \[ Q_{ii} = w_i \]
+
+For multi-dimensional integration, the quadrature matrices are created for each dimension
+separately and returned as a tuple.
+"""
+function quadrature_matrix_nd(weights_tuple::NTuple{N, AbstractVector}) where {N}
+	return ntuple(i -> quadrature_matrix(weights_tuple[i]), N)
+end
+
+@doc raw"""
+	create_node_map(standard_cell::StandardKSCell{T, N}, start_index::Int) where {T <: Number, N} -> Dict{NTuple{N, Int}, Int}
+
+Create a node map for a standard cell starting from a given index.
+
+# Arguments
+- `standard_cell::StandardKSCell{T, N}`: The standard cell containing the nodes.
+- `start_index::Int`: The starting index for the node map.
+
+# Returns
+- `Dict{NTuple{N, Int}, Int}`: A dictionary mapping multi-dimensional indices to linear
+  indices.
+
+# Mathematical Description
+The node map is created by iterating over all possible combinations of node indices in each
+dimension. The multi-dimensional indices are mapped to linear indices starting from
+`start_index`.
+
+The multi-dimensional indices are generated using the Cartesian product of the node indices
+in each dimension: \[ \text{indices} =
+\text{product}(1:\text{length}(\text{nodes\_with\_boundary}[d]) \, \text{for} \, d \,
+\text{in} \, 1:N) \]
+
+The node map is then created by assigning each multi-dimensional index to a linear index: \[
+\text{node\_map}[\text{multi\_idx}] = \text{start\_index} + \text{idx} - 1 \]
+"""
+function create_node_map(
+	standard_cell::StandardKSCell{T, N},
+	start_index::Int,
+) where {T <: Number, N}
+	node_map = Dict{NTuple{N, Int}, Int}()
+	indices = Iterators.product(
+		ntuple(
+			d -> 1:length(standard_cell.nodes_with_boundary[d]), N)...,
+	)
+	for (idx, multi_idx) in enumerate(indices)
+		node_map[NTuple{N, Int}(multi_idx)] = start_index + idx - 1
+	end
+	return node_map
+end
+@doc raw"""
+	enforce_ck_continuity_spectral!(D::AbstractMatrix, k::Int, nodes::AbstractVector) -> AbstractMatrix
+
+Enforce C^k continuity on the spectral differentiation matrix.
+
+# Arguments
+- `D::AbstractMatrix`: The spectral differentiation matrix.
+- `k::Int`: The order of continuity to enforce.
+- `nodes::AbstractVector`: The nodes at which the differentiation matrix is defined.
+
+# Returns
+- `AbstractMatrix`: The modified differentiation matrix with enforced C^k continuity.
+
+# Throws
+- `ArgumentError`: If `k` is less than 0 or greater than or equal to the number of nodes
+  minus 1.
+
+# Mathematical Description
+C^k continuity is enforced by modifying the first `k` rows and the last `k` rows of the
+differentiation matrix. For the first `k` rows, the entries are set to ensure that the
+polynomial interpolant matches the function values and derivatives up to order `k` at the
+first node. For the last `k` rows, the entries are set to ensure the same at the last node.
+
+For the first `k` rows: \[ D[i, j] = \frac{nodes[i]^{j-1}}{(j-1)!} \quad \text{for} \quad i =
+1, \ldots, k \quad \text{and} \quad j = 1, \ldots, k+1 \]
+
+For the last `k` rows: \[ D[i, j] = \frac{(nodes[end] - nodes[i])^{j-1}}{(j-1)!} \quad
+\text{for} \quad i = n-k+1, \ldots, n \quad \text{and} \quad j = n-k, \ldots, n \]
+
+# Logical Operations
+- Check if `k` is valid: \[ \text{if} \quad k < 0 \quad \text{or} \quad k + 1 \geq n \quad
+  \text{throw} \quad \text{ArgumentError} \]
+- Set the first `k` rows: \[ D[i, :] \leftarrow 0.0 \quad \text{for} \quad i = 1, \ldots, k
+  \] \[ D[i, j] = \frac{nodes[i]^{j-1}}{(j-1)!} \quad \text{for} \quad j = 1, \ldots, k+1 \]
+- Set the last `k` rows: \[ D[i, :] \leftarrow 0.0 \quad \text{for} \quad i = n-k+1, \ldots,
+  n \] \[ D[i, j] = \frac{(nodes[end] - nodes[i])^{j-1}}{(j-1)!} \quad \text{for} \quad j =
+  n-k, \ldots, n \]
+"""
+function enforce_ck_continuity_spectral!(D::AbstractMatrix, k::Int, nodes::AbstractVector)
+	n = size(D, 1)
+	if k < 0 || k + 1 >= n
+		throw(ArgumentError("Invalid value for k"))
+	end
+
+	# For first k rows (left boundary)
+	for i in 1:k
+		D[i, :] .= 0.0
+		for j in 1:(k + 1)
+			# Use nodes[i] directly for the left boundary
+			D[i, j] = nodes[i]^(j - 1) / factorial(j - 1)
+		end
+	end
+
+	# For last k rows (right boundary)
+	for i in (n - k + 1):n
+		D[i, :] .= 0.0
+		for j in 1:(k + 1)
+			# Use (nodes[end] - nodes[i]) for the right boundary
+			D[i, end - k + j - 1] = (nodes[end] - nodes[i])^(j - 1) / factorial(j - 1)
+		end
 	end
 
 	return D
 end
 
-"""
-	kth_derivative_matrix!(points::AbstractVector{<:Real}, k_max::Integer)
+@doc raw"""
+	enforce_ck_continuity_bspline!(D::AbstractMatrix, k::Int, nodes::AbstractVector, degree::Int) -> AbstractMatrix
 
-Compute the k-th derivative matrices for a set of nodes.
-
-# Arguments
-- `points::AbstractVector{<:Real}`: A vector of nodes.
-- `k_max::Integer`: The maximum order of the derivative.
-
-# Returns
-- `Vector{SparseMatrixCSC{Float64, Int}}`: A vector of derivative matrices up to the k-th order.
-"""
-function kth_derivative_matrix!(points::AbstractVector{<:Real}, k_max::Integer)
-	k_max > 0 || throw(ArgumentError("k_max must be positive."))
-	n = length(points)
-	n >= 3 || throw(ArgumentError("The length of points must be at least 3."))
-
-	T = eltype(points)
-	D_matrices = [spzeros(T, n, n) for _ in 1:k_max]
-	weights = barycentric_weights(points)
-	D_prev = derivative_matrix!(points)
-	D_matrices[1] = D_prev
-
-	diff_recip = [i != j ? inv(points[i] - points[j]) : zero(T) for i in 1:n, j in 1:n]
-
-	for k in 2:k_max
-		D_k = D_matrices[k]
-		for i in 1:n
-			for j in 1:n
-				if i != j
-					D_k[i, j] = (k * diff_recip[i, j]) * (weights[j] / weights[i] * D_prev[i, i] - D_prev[i, j])
-				end
-			end
-			D_k[i, i] = -sum(D_k[i, :])
-		end
-		D_prev = D_k
-	end
-
-	return D_matrices
-end
-
-"""
-	derivative_matrix_nd(points::AbstractVector{<:AbstractVector{<:Real}}, dim::Integer, order::Integer = 1)
-
-Construct the derivative matrix for each dimension independently, for an N-dimensional grid of points.
+Enforce C^k continuity on the B-spline differentiation matrix.
 
 # Arguments
-- `points::AbstractVector{<:AbstractVector{<:Real}}`: A vector of vectors representing the nodes in each dimension.
-- `dim::Integer`: The number of dimensions.
-- `order::Integer`: The order of the derivative (default is 1).
+- `D::AbstractMatrix`: The B-spline differentiation matrix.
+- `k::Int`: The order of continuity to enforce.
+- `nodes::AbstractVector`: The nodes at which the differentiation matrix is defined.
+- `degree::Int`: The degree of the B-spline basis functions.
 
 # Returns
-- `Vector{SparseMatrixCSC{Float64, Int}}`: A vector of derivative matrices, one for each dimension.
+- `AbstractMatrix`: The modified differentiation matrix with enforced C^k continuity.
+
+# Throws
+- `ArgumentError`: If `k` is less than 0 or greater than or equal to the number of nodes.
+
+# Mathematical Description
+C^k continuity is enforced by modifying the first `k + 1` rows and the last `k` rows of the
+differentiation matrix. For the first `k + 1` rows, the entries are set to ensure that the
+B-spline basis functions match the function values and derivatives up to order `k` at the
+first node. For the last `k` rows, the entries are set to ensure the same at the last node.
+
+For the first `k + 1` rows: \[ D[i, j] = B[i](x_j) \cdot \frac{x_j^{i-1}}{(i-1)!} \quad
+\text{for} \quad i = 1, \ldots, k+1 \quad \text{and} \quad j = 1, \ldots, n \]
+
+For the last `k` rows: \[ D[i, j] = \frac{x_i^{j-1}}{(j-1)!} \quad \text{for} \quad i =
+n-k+1, \ldots, n \quad \text{and} \quad j = 1, \ldots, \min(k+1, n) \]
+
+# Logical Operations
+- Check if `k` is valid: \[ \text{if} \quad k < 0 \quad \text{or} \quad k \geq n \quad
+  \text{throw} \quad \text{ArgumentError} \]
+- Set the first `k + 1` rows: \[ D[i, :] \leftarrow 0.0 \quad \text{for} \quad i = 1, \ldots,
+  k+1 \] \[ D[i, j] = B[i](x_j) \cdot \frac{x_j^{i-1}}{(i-1)!} \quad \text{for} \quad j = 1,
+  \ldots, n \]
+- Set the last `k` rows: \[ D[i, :] \leftarrow 0.0 \quad \text{for} \quad i = n-k+1, \ldots,
+  n \] \[ D[i, idx] = \frac{x_i^{j-1}}{(j-1)!} \quad \text{for} \quad j = 1, \ldots,
+  \min(k+1, n) \]
 """
-function derivative_matrix_nd(points::AbstractVector{<:AbstractVector{<:Real}}, dim::Integer, order::Integer = 1)
-	dim == length(points) || throw(ArgumentError("The specified dimension dim must match the number of dimensions in the points."))
-	order >= 1 || throw(ArgumentError("The derivative order must be at least 1."))
-
-	# Initialize a vector to store derivative matrices
-	T = eltype(points[1])
-	derivative_matrices = Vector{SparseMatrixCSC{T, Int}}(undef, dim)
-
-	# Compute derivative matrices for each dimension
-	for d in 1:dim
-		nodes_d = points[d]
-		derivative_matrices[d] = kth_derivative_matrix!(nodes_d, order)[order]
-	end
-
-	return derivative_matrices
-end
-
-"""
-	enforce_ck_continuity!(D::AbstractSparseMatrix, k::Integer)
-
-Enforce C^k continuity on a derivative matrix by modifying its first and last `k` rows in place.
-
-# Arguments
-- `D::AbstractSparseMatrix`: The derivative matrix to modify.
-- `k::Integer`: The order of continuity to enforce.
-
-# Returns
-- `AbstractSparseMatrix`: The modified derivative matrix.
-"""
-function enforce_ck_continuity!(D::AbstractMatrix, k::Integer)
+function enforce_ck_continuity_bspline!(
+	D::AbstractMatrix,
+	k::Int,
+	nodes::AbstractVector,
+	degree::Int,
+)
 	n = size(D, 1)
-	0 <= k < n || throw(ArgumentError("Continuity order k must be between 0 and n-1."))
+	if k < 0 || k >= n
+		throw(ArgumentError("Invalid value for k"))
+	end
 
-	for i in 1:k
+	# Use fully qualified names with BSplineKit
+	knots = BSplineKit.KnotVector(BSplineKit.UniformKnotInterval(degree), length(nodes))
+	basis = BSplineKit.BSplineBasis(BSplineKit.BSplineOrder(degree + 1), knots)
+
+	# Rest of implementation
+	for i in 1:(k + 1)
 		D[i, :] .= 0.0
-		D[i, i] = 1.0
+		for j in eachindex(nodes)
+			B = BSplineKit.evaluate(basis, nodes[j])  # Use fully qualified evaluate
+			D[i, j] = B[i] * (nodes[j]^(i - 1)) / factorial(i - 1)
+		end
 	end
 
 	for i in (n - k + 1):n
 		D[i, :] .= 0.0
-		D[i, i] = 1.0
+		for j in 1:(k + 1)
+			D[i, end - k + j - 1] = (nodes[end] - nodes[i])^(j - 1) / factorial(j - 1)
+		end
 	end
 
 	return D
 end
 
-"""
-	is_near_zero(x::Number)
+@doc raw"""
+	create_basis_functions(p::Int, continuity_order::Int) -> Vector{Function}
 
-Check if a value is close to zero within machine precision.
-
-# Arguments
-- `x::Number`: The value to check.
-
-# Returns
-- `Bool`: True if the value is near zero, false otherwise.
-"""
-function is_near_zero(x::Number)
-	return abs(x) < eps(typeof(x))
-end
-
-"""
-	create_basis_functions(polynomial_degree::Integer, dim::Integer)
-
-Create basis functions for the given polynomial degree and dimension.
+Create basis functions for a given polynomial order and continuity order.
 
 # Arguments
-- `polynomial_degree::Integer`: The polynomial degree for the basis functions.
-- `dim::Integer`: The number of dimensions.
+- `p::Int`: Polynomial order.
+- `continuity_order::Int`: Continuity order.
 
 # Returns
-- `Vector{KSBasisFunction}`: A vector of basis functions.
+- `Vector{Function}`: Vector of basis functions.
+
+# Mathematical Description
+The basis functions are created using Lagrange interpolation. For each node \( x_i \), the
+basis function \( \phi_i(x) \) is defined as: \[ \phi_i(x) = \frac{\prod_{j \neq i} (x -
+x_j)}{\prod_{j \neq i} (x_i - x_j)} \]
+
+The numerator is the product of the differences between \( x \) and all other nodes \( x_j
+\): \[ \text{numerator} = \prod_{j \neq i} (x - x_j) \]
+
+The denominator is the product of the differences between \( x_i \) and all other nodes \(
+x_j \): \[ \text{denominator} = \prod_{j \neq i} (x_i - x_j) \]
+
+The basis function is then given by: \[ \phi_i(x) =
+\frac{\text{numerator}}{\text{denominator}} \]
 """
-function create_basis_functions(polynomial_degree::Integer, dim::Integer)
-	polynomial_degree >= 1 && dim >= 1 || throw(ArgumentError("polynomial_degree and dim must be at least 1"))
+function create_basis_functions(p::Int, continuity_order::Int)
+	nodes, _, _, _ = create_legendre_nodes_and_weights(p)
+	basis_functions = Vector{Function}(undef, p + 2)
 
-	num_basis_functions = binomial(polynomial_degree + dim, dim)
-	basis_functions = Vector{KSBasisFunction}(undef, num_basis_functions)
-	basis_index = 1
-
-	nodes = collect(0:polynomial_degree)
-	lagrange_basis = [Lagrange_polynomials(nodes) for _ in 1:dim]
-
-	for multi_index in Iterators.product(ntuple(_ -> 0:polynomial_degree, dim)...)
-		if sum(multi_index) <= polynomial_degree
-			basis_functions[basis_index] = KSBasisFunction(basis_index,
-														   x -> prod(lagrange_basis[i][multi_index[i] + 1, 1] for i in 1:dim))
-			basis_index += 1
-		end
+	for i in 1:(p + 2)
+		basis_functions[i] =
+			x -> begin
+				numerator = prod((x - nodes[j]) for j in 1:(p + 2) if j != i)
+				denominator = prod((nodes[i] - nodes[j]) for j in 1:(p + 2) if j != i)
+				return numerator / denominator
+			end
 	end
 
 	return basis_functions
 end
+@doc raw"""
+	Lagrange_polynomials(x::AbstractVector{T}, nodes::AbstractVector{T}, i::Int) where T <: Real -> AbstractVector{T}
 
-"""
-	scale_derivative_matrix(D::AbstractSparseMatrix, scale_factor::Number)
-
-Scale the derivative matrix by a given factor.
-
-# Arguments
-- `D::AbstractSparseMatrix`: The derivative matrix to scale.
-- `scale_factor::Number`: The scaling factor.
-
-# Returns
-- `AbstractSparseMatrix`: The scaled derivative matrix.
-"""
-function scale_derivative_matrix(D::AbstractSparseMatrix, scale_factor::Number)
-	return D * scale_factor
-end
-
-"""
-	create_differentiation_matrices(points::AbstractVector{<:Real}, dim::Integer)
-
-Create differentiation matrices for the given points in the specified number of dimensions.
+Compute the Lagrange polynomial \( L_i(x) \) at given points for a specified node.
 
 # Arguments
-- `points::AbstractVector{<:Real}`: The points at which to create the differentiation matrices.
-- `dim::Integer`: The number of dimensions.
+- `x::AbstractVector{T}`: Points at which to evaluate the polynomial.
+- `nodes::AbstractVector{T}`: Nodes of the interpolation.
+- `i::Int`: Index of the node for which to compute the polynomial.
 
 # Returns
-- `Vector{SparseMatrixCSC}`: A vector of differentiation matrices, one for each dimension.
+- `AbstractVector{T}`: Values of the Lagrange polynomial at the given points.
+
+# Throws
+- `ArgumentError`: If `i` is not a valid node index.
+
+# Mathematical Description
+The Lagrange polynomial \( L_i(x) \) is defined as: \[ L_i(x) = \prod_{j \neq i} \frac{x -
+x_j}{x_i - x_j} \]
+
+The polynomial is computed by iterating over all nodes \( x_j \) except \( x_i \) and
+multiplying the terms: \[ \text{result} = \prod_{j \neq i} \frac{x - x_j}{x_i - x_j} \]
+
+# Logical Operations
+- Check if `i` is valid: \[ \text{if} \quad i < 1 \quad \text{or} \quad i > n \quad
+  \text{throw} \quad \text{ArgumentError} \]
+- Compute the polynomial: \[ \text{result} \leftarrow 1.0 \] \[ \text{for} \quad j \neq i
+  \quad \text{result} \leftarrow \text{result} \cdot \frac{x - x_j}{x_i - x_j} \]
 """
-function create_differentiation_matrices(points::AbstractVector{<:Real}, dim::Integer)
-	n = length(points)
-	n >= 3 || throw(ArgumentError("The number of points must be at least 3."))
-	dim >= 1 || throw(ArgumentError("The number of dimensions must be at least 1."))
-
-	diff_matrices = Vector{SparseMatrixCSC{eltype(points), Int}}(undef, dim)
-
-	for d in 1:dim
-		diff_matrices[d] = derivative_matrix!(points)
+function Lagrange_polynomials(
+	x::AbstractVector{T},
+	nodes::AbstractVector{T},
+	i::Int,
+) where {T <: Real}
+	n = length(nodes)
+	if i < 1 || i > n
+		throw(ArgumentError("Invalid index i. Must be between 1 and $(n)."))
 	end
 
-	return diff_matrices
-end
-
-"""
-	quadrature_matrix!(points::AbstractVector{<:Real}, weights::AbstractVector{<:Real})
-
-Constructs a quadrature matrix for numerical integration using specified points and weights.
-
-# Arguments
-- `points::AbstractVector{<:Real}`: A vector of nodes where the function is evaluated.
-- `weights::AbstractVector{<:Real}`: A vector of quadrature weights associated with the nodes.
-
-# Returns
-- `SparseMatrixCSC{Float64, Int}`: The quadrature matrix that applies weights to function values for integration.
-"""
-
-function quadrature_matrix!(weights::AbstractVector{<:Real})
-	n = length(weights)
-	Q = spzeros(n, n)
-	for i in 1:n
-		Q[i, i] = weights[i]
-	end
-	return Q
-end
-
-"""
-	compute_integral(values::AbstractVector{<:Real}, quad_matrix::AbstractMatrix)
-
-Computes the integral of function values using the quadrature matrix.
-
-# Arguments
-- `values::AbstractVector{<:Real}`: A vector of function values evaluated at the nodes.
-- `quad_matrix::AbstractMatrix`: The quadrature matrix that weights the function values for integration.
-
-# Returns
-- `Float64`: The computed integral value.
-"""
-function compute_integral(weights::AbstractVector{<:Real}, values::AbstractVector{<:Real})
-	n = length(values)
-	n == size(weights, 1) || throw(ArgumentError("The number of values must match the size of the quadrature matrix."))
-
-	return dot(weights, values)
-end
-
-"""
-	quadrature_matrix_nd(weights_input::Union{AbstractVector, Tuple}, dim::Int)
-
-Constructs a multi-dimensional quadrature matrix using tensor products of 1D quadrature matrices.
-
-# Arguments
-- `weights_input::Union{AbstractVector, Tuple}`: A vector or tuple of vectors representing weights for each dimension.
-- `dim::Int`: The number of dimensions.
-
-# Returns
-- `SparseMatrixCSC{Float64, Int}`: The multi-dimensional quadrature matrix.
-"""
-function quadrature_matrix_nd(weights_input::Union{AbstractVector, Tuple}, dim::Int)
-	# Convert tuples to vectors to handle different input types uniformly
-	weights_input = isa(weights_input, Tuple) ? collect(weights_input) : weights_input
-
-	# Ensure the input dimensions match the expected number
-	dim == length(weights_input) || throw(ArgumentError("Dimensions of weights must match."))
-
-	# Extract weights as vectors, converting tuples if needed
-	weights = [isa(weights_input[d], Tuple) ? collect(weights_input[d]) : weights_input[d] for d in 1:dim]
-
-	# Create 1D quadrature matrices for each dimension
-	Q_matrices = [quadrature_matrix!(weights[d]) for d in 1:dim]
-
-	# Use Kronecker product to create the multi-dimensional quadrature matrix
-	Q_nd = Q_matrices[1]
-	for i in 2:dim
-		Q_nd = kron(Q_nd, Q_matrices[i])  # Tensor product to combine matrices
-	end
-
-	return Q_nd
-end
-
-"""
-	compute_integral_nd(values::AbstractVector{<:Real}, quad_matrix::AbstractMatrix)
-
-Computes the multi-dimensional integral of function values using the quadrature matrix.
-
-# Arguments
-- `values::AbstractVector{<:Real}`: A vector of function values on a multi-dimensional grid.
-- `quad_matrix::AbstractMatrix`: The multi-dimensional quadrature matrix.
-
-# Returns
-- `Float64`: The computed integral value.
-"""
-function compute_integral_nd(values::AbstractVector{<:Real}, quad_matrix::AbstractMatrix)
-	n = length(values)
-	n == size(quad_matrix, 1) || throw(ArgumentError("The number of values must match the size of the quadrature matrix."))
-
-	return sum(quad_matrix * values)
-end
-
-"""
-	create_quadrature_matrices(weights::AbstractVector{<:Real}, dim::Integer)
-
-Create quadrature matrices for numerical integration in multiple dimensions.
-
-# Arguments
-- `weights::AbstractVector{<:Real}`: A vector of weights for the quadrature points.
-- `dim::Integer`: The number of dimensions.
-
-# Returns
-An array of quadrature matrices, where each matrix represents the quadrature points for a specific dimension.
-
-"""
-function create_quadrature_matrices(weights::AbstractVector{<:Real}, dim::Integer)
-	n = length(weights)
-	n >= 3 || throw(ArgumentError("The number of points must be at least 3."))
-	dim >= 1 || throw(ArgumentError("The number of dimensions must be at least 1."))
-
-	quadrature_matrices = Vector{SparseMatrixCSC{eltype(weights), Int}}(undef, dim)
-
-	for d in 1:dim
-		quadrature_matrices[d] = quadrature_matrix!(weights)
-	end
-
-	return quadrature_matrices
-end
-
-"""
-	scale_quadrature_matrix!(Q::AbstractSparseMatrix, scale_factor::Number)
-
-Scales the quadrature matrix by a given factor.
-
-# Arguments
-- `Q::AbstractSparseMatrix`: The quadrature matrix to scale.
-- `scale_factor::Number`: The scaling factor.
-
-# Returns
-- `AbstractSparseMatrix`: The scaled quadrature matrix.
-"""
-function scale_quadrature_matrix!(Q::AbstractSparseMatrix, scale_factor::Number)
-	return Q * scale_factor
-end
-
-"""
-	create_ocfe_mesh(coord_system::AbstractKSCoordinateSystem,
-					 num_elements::AbstractVector{<:Integer},
-					 poly_degree::Union{Integer, AbstractVector{<:Integer}},
-					 continuity_order::Union{Integer, AbstractVector{<:Integer}},
-					 dims::Int) -> KSMesh{T, N} where {T, N}
-
-Create an Orthogonal Collocation on Finite Elements (OCFE) mesh for a given coordinate system.
-
-# Arguments
-- `coord_system::AbstractKSCoordinateSystem`: The coordinate system used for the mesh, which can be Cartesian, Polar, Cylindrical, or Spherical.
-- `num_elements::AbstractVector{<:Integer}`: A vector specifying the number of elements in each dimension.
-- `poly_degree::Union{Integer, AbstractVector{<:Integer}}`: The polynomial degree used for each element. It can be a single integer (uniform degree across dimensions) or a vector of integers specifying the degree for each dimension.
-- `continuity_order::Union{Integer, AbstractVector{<:Integer}}`: Specifies the continuity order of the basis functions between elements. It can be a single integer or a vector of integers for each dimension.
-- `dims::Int`: The number of dimensions in the problem.
-
-# Returns
-- `KSMesh{T, N}`: A mesh of type `KSMesh`, which includes the elements, tensor product masks, and location matrices for the problem's domain.
-
-# Description
-This function generates a mesh based on the specified coordinate system, polynomial degree, and number of elements in each dimension. It is designed to work with various coordinate systems such as Cartesian, Polar, Cylindrical, and Spherical coordinates. The function proceeds as follows:
-
-1. **Determine the Element Type (`T`)**:
-	- The type `T` is inferred from the range values of the coordinate system. This ensures compatibility with different coordinate systems.
-
-2. **Initialize Structures**:
-	- Various structures are prepared, including `global_nodes` (mapping unique nodes to global indices), `global_node_coords` (storing unique node coordinates), `elements` (a vector of mesh elements), `location_matrices` (storing the mapping of local to global node indices for each element), and `tensor_product_masks` (indicating tensor product structure of basis functions).
-
-3. **Populate the Mesh**:
-	- The function iterates over each element in the domain, creating nodes, differentiation matrices, quadrature matrices, and mapping nodes to their global indices. It also builds the location matrices and tensor product masks for each element.
-
-4. **Return the Mesh**:
-	- The function returns a `KSMesh` object containing the generated elements, tensor product masks, and location matrices.
-
-# Example
-```julia
-# Example usage with Cartesian coordinates
-cartesian_coords = KSCartesianCoordinates(((0.0, 1.0), (0.0, 1.0), (0.0, 1.0)))
-num_elements = [4, 4, 4]
-poly_degree = 3
-continuity_order = 2
-dims = 3
-
-mesh = create_ocfe_mesh(cartesian_coords, num_elements, poly_degree, continuity_order, dims)
-```
-
-# Notes
-- The function handles different coordinate systems by extracting the appropriate range values for each dimension.
-- The `tensor_product_masks` are created as `BitArray` objects with dimensions determined by the polynomial degrees, which ensures the correct tensor product structure for the basis functions.
-- This function is particularly useful for creating meshes in high-dimensional spaces where the problem domain is described by a non-Cartesian coordinate system.
-
-# Errors
-- Throws an `ArgumentError` if the coordinate system or dimension index is unsupported, or if there is an inconsistency in the dimensions of the input arguments.
-
-"""
-
-function create_ocfe_mesh(coord_system::AbstractKSCoordinateSystem,
-						  num_elements::AbstractVector{<:Integer},
-						  poly_degree::Union{Integer, AbstractVector{<:Integer}},
-						  continuity_order::Union{Integer, AbstractVector{<:Integer}},
-						  dims::Int)
-	# Determine the element type T based on the coordinate system
-	range = get_coordinate_range(coord_system, 1)
-	T = eltype(range[1])  # Extract the element type from the first value in the range tuple
-
-	# Ensure poly_degree is a vector of the correct length
-	poly_degree_vec = typeof(poly_degree) <: Integer ? fill(poly_degree, dims) : collect(poly_degree)
-
-	# Prepare structures for global nodes and elements
-	global_nodes = Dict{Tuple, Int}()  # Map unique nodes to their global indices
-	global_node_coords = Vector{Tuple}()  # List of unique node coordinates
-	elements = Vector{KSElement{T, dims}}()  # Vector of mesh elements with correct type
-	location_matrices = Vector{Dict{Int, Int}}()  # Location matrices for each element
-	tensor_product_masks = Vector{AbstractArray{Bool, dims}}()  # Tensor product masks for each element
-
-	# Function to add a node to the global node set and return its index
-	function add_global_node(coord::Tuple, global_nodes, global_node_coords)
-		if !haskey(global_nodes, coord)
-			global_nodes[coord] = length(global_node_coords) + 1
-			push!(global_node_coords, coord)
+	result = ones(T, length(x))
+	for j in 1:n
+		if j != i
+			result .*= (x .- nodes[j]) ./ (nodes[i] - nodes[j])
 		end
-		return global_nodes[coord]
 	end
 
-	# Loop over each element in the multi-dimensional space
-	element_grids = Iterators.product((0:(num_elements[d] - 1) for d in 1:dims)...)
+	return result
+end
 
-	for _ in element_grids
-		element_nodes = Vector{Vector{T}}(undef, dims)
-		differentiation_matrices = Vector{Vector{SparseMatrixCSC{T, Int}}}(undef, dims)
-		quadrature_matrices = Vector{Vector{SparseMatrixCSC{T, Int}}}(undef, dims)
-		node_indices = Vector{Int}()  # To store the indices of nodes for the current element
+# ToDo: Make clear that this scaling is fictitious domain and level scaling
 
-		# Add nodes and create differentiation and quadrature matrices
-		for d in 1:dims
-			range = get_coordinate_range(coord_system, d)
-			nodes = range[1] .+ (range[2] - range[1]) .* (0:poly_degree_vec[d]) ./ poly_degree_vec[d]
-			element_nodes[d] = nodes
-			differentiation_matrices[d] = [derivative_matrix!(nodes)]
-			quadrature_matrices[d] = [quadrature_matrix!(nodes)]
-			for node in nodes
-				global_index = add_global_node((node,), global_nodes, global_node_coords)
-				push!(node_indices, global_index)
+@doc raw"""
+	determine_scaling_factor(a::Real, b::Real) -> Tuple{Real, Real}
+
+Determine the scaling factors for differentiation and quadrature.
+
+# Arguments
+- `a::Real`: Lower bound of the interval.
+- `b::Real`: Upper bound of the interval.
+
+# Returns
+- `Tuple{Real, Real}`: Differentiation scaling factor and quadrature scaling factor.
+
+# Throws
+- `ArgumentError`: If `a` is not less than `b`.
+
+# Mathematical Description
+The scaling factors are determined based on the interval \([a, b]\). The differentiation
+scaling factor is given by: \[ \text{diff\_scaling} = \frac{2}{b - a} \]
+
+The quadrature scaling factor is given by: \[ \text{quad\_scaling} = \frac{b - a}{2} \]
+
+# Logical Operations
+- Check if `a` is less than `b`: \[ \text{if} \quad a \geq b \quad \text{throw} \quad
+  \text{ArgumentError} \]
+- Compute the scaling factors: \[ \text{diff\_scaling} = \frac{2}{b - a} \] \[
+  \text{quad\_scaling} = \frac{b - a}{2} \]
+"""
+function determine_scaling_factor(a::Real, b::Real)
+	if a >= b
+		throw(ArgumentError("Invalid arguments: a must be less than b"))
+	end
+	diff_scaling = 2 / (b - a)
+	quad_scaling = (b - a) / 2
+	return diff_scaling, quad_scaling
+end
+
+# ToDo: Make clear that this scaling is fictitious domain and level scaling
+
+@doc raw"""
+	apply_scaling_factors!(D::AbstractMatrix, Q::AbstractMatrix, diff_scaling::Real, quad_scaling::Real) -> Tuple{AbstractMatrix, AbstractMatrix}
+
+Apply scaling factors to the differentiation and quadrature matrices.
+
+# Arguments
+- `D::AbstractMatrix`: Differentiation matrix.
+- `Q::AbstractMatrix`: Quadrature matrix.
+- `diff_scaling::Real`: Scaling factor for the differentiation matrix.
+- `quad_scaling::Real`: Scaling factor for the quadrature matrix.
+
+# Returns
+- `Tuple{AbstractMatrix, AbstractMatrix}`: Scaled differentiation and quadrature matrices.
+
+# Mathematical Description
+The differentiation matrix \( D \) is scaled by the factor \( \text{diff\_scaling} \): \[ D
+\leftarrow D \cdot \text{diff\_scaling} \]
+
+The quadrature matrix \( Q \) is scaled by the factor \( \text{quad\_scaling} \): \[ Q
+\leftarrow Q \cdot \text{quad\_scaling} \]
+
+# Logical Operations
+- Scale the differentiation matrix: \[ D \leftarrow D \cdot \text{diff\_scaling} \]
+- Scale the quadrature matrix: \[ Q \leftarrow Q \cdot \text{quad\_scaling} \]
+"""
+function apply_scaling_factors!(
+	D::AbstractMatrix,
+	Q::AbstractMatrix,
+	diff_scaling::Real,
+	quad_scaling::Real,
+)
+	D .*= diff_scaling
+	Q .*= quad_scaling
+	return D, Q
+end
+@doc raw"""
+	create_ocfc_mesh(coord_system::KSCartesianCoordinates{T, N},
+					 num_cells::NTuple{N, Int},
+					 p_vec::NTuple{N, Int},
+					 continuity_order::NTuple{N, Int},
+					 dim::Int,
+					 max_level::Int) where {T <: Number, N} -> KSMesh{T, N}
+
+Create an octree-based Cartesian finite cell (OCFC) mesh.
+
+# Arguments
+- `coord_system::KSCartesianCoordinates{T, N}`: Cartesian coordinate system.
+- `num_cells::NTuple{N, Int}`: Number of cells in each dimension.
+- `p_vec::NTuple{N, Int}`: Polynomial degrees for each dimension.
+- `continuity_order::NTuple{N, Int}`: Continuity order for each dimension.
+- `dim::Int`: Number of dimensions.
+- `max_level::Int`: Maximum refinement level.
+
+# Returns
+- `KSMesh{T, N}`: The created OCFC mesh.
+
+# Mathematical Description
+The mesh is created by iterating over each level of refinement and each cell within the
+level. For each cell, the following steps are performed:
+1. Compute the cell size: \[ \text{cell\_size}[d] = \frac{\text{domain}[d][2] -
+\text{domain}[d][1]}{\text{num\_cells}[d]} \]
+
+2. Compute the cell start and end points: \[ \text{cell\_start}[d] = \text{domain}[d][1] +
+(\text{multi\_idx}[d] - 1) \cdot \text{cell\_size}[d] \] \[ \text{cell\_end}[d] =
+\text{cell\_start}[d] + \text{cell\_size}[d] \]
+
+3. Determine if the cell is on the boundary: \[ \text{is\_boundary} =
+\text{any}(\text{multi\_idx}[d] == 1 \, \text{or} \, \text{multi\_idx}[d] ==
+\text{num\_cells}[d] \, \text{for} \, d \, \text{in} \, 1:N) \]
+
+4. Create the tensor product mask: \[ \text{mask} =
+\text{create\_tensor\_product\_mask}(\text{p\_vec}, \text{continuity\_order},
+\text{is\_boundary}, \text{is\_fictitious}, \text{dim}) \]
+
+5. Create the standard cell and node map: \[ \text{standard\_cell} =
+\text{get\_or\_create\_standard\_cell}(\text{p\_vec}, \text{level}; \text{continuity\_order}
+= \text{continuity\_order}) \] \[ \text{cell\_node\_map} =
+\text{create\_node\_map}(\text{standard\_cell}, \text{global\_node\_counter}) \]
+
+6. Update the global node counter: \[ \text{global\_node\_counter} +=
+\text{length}(\text{cell\_node\_map}) \]
+
+7. Determine the neighbors of the cell: \[ \text{neighbors}[\text{Symbol}("dim$(d)_neg")] =
+\text{if} \, \text{multi\_idx}[d] == 1 \, \text{then} \, -1 \, \text{else} \, \text{cell\_id}
+- \text{level\_num\_cells\_vec}[d]^{(d - 1)} \] \[
+\text{neighbors}[\text{Symbol}("dim$(d)_pos")] = \text{if} \, \text{multi\_idx}[d] ==
+\text{level\_num\_cells\_vec}[d] \, \text{then} \, -1 \, \text{else} \, \text{cell\_id} +
+\text{level\_num\_cells\_vec}[d]^{(d - 1)} \]
+
+8. Create the cell instance and update the node map: \[ \text{cell\_instance} =
+\text{KSCell}(\text{id} = \text{cell\_id}, \ldots) \] \[ \text{node\_map}[(\text{cell\_id},
+\text{local\_idx})] = \text{global\_idx} \]
+
+9. Update the boundary cells if the cell is on the boundary: \[ \text{if} \,
+\text{multi\_idx}[d] == 1 \, \text{then} \, \text{side} = \text{Symbol}("left_dim_$d") \,
+\text{else} \, \text{side} = \text{Symbol}("right_dim_$d") \] \[
+\text{boundary\_cells}[\text{side}] = \text{get}(\text{boundary\_cells}, \text{side},
+\text{Int}[]) \] \[ \text{push!}(\text{boundary\_cells}[\text{side}], \text{cell\_id}) \]
+
+# Logical Operations
+- Iterate over each level and each cell within the level.
+- Compute the cell size, start, and end points.
+- Determine if the cell is on the boundary.
+- Create the tensor product mask, standard cell, and node map.
+- Update the global node counter.
+- Determine the neighbors of the cell.
+- Create the cell instance and update the node map.
+- Update the boundary cells if the cell is on the boundary.
+"""
+function create_ocfc_mesh(
+	coord_system::KSCartesianCoordinates{T, N},
+	num_cells::NTuple{N, Int},
+	p_vec::NTuple{N, Int},
+	continuity_order::NTuple{N, Int},
+	dim::Int,
+	max_level::Int,
+) where {T <: Number, N}
+	cells = Vector{KSCell{T, N}}()
+	global_node_counter = 1
+	cell_id = 1
+	node_map = Dict{Tuple{Int, NTuple{N, Int}}, Int}()
+	boundary_cells = Dict{Symbol, Vector{Int}}()
+
+	for level in 1:max_level
+		level_num_cells_vec = num_cells
+
+		cell_sizes = ntuple(
+			d ->
+				(coord_system.domains[d][2] - coord_system.domains[d][1]) /
+				level_num_cells_vec[d],
+			N,
+		)
+
+		for idx in Iterators.product(ntuple(d -> 1:level_num_cells_vec[d], N)...)
+			multi_idx = NTuple{N, Int}(idx)
+			cell_start = ntuple(
+				d -> coord_system.domains[d][1] + (multi_idx[d] - 1) * cell_sizes[d],
+				N,
+			)
+			cell_end = ntuple(d -> cell_start[d] + cell_sizes[d], N)
+			cell_domain = ntuple(d -> (cell_start[d], cell_end[d]), N)
+
+			is_boundary = any(
+				multi_idx[d] == 1 || multi_idx[d] == level_num_cells_vec[d] for d in 1:N
+			)
+			is_fictitious = false
+
+			mask = create_tensor_product_mask(
+				p_vec,
+				continuity_order,
+				is_boundary,
+				is_fictitious,
+				dim,
+			)
+
+			standard_cell = get_or_create_standard_cell(
+				p_vec,
+				level;
+				continuity_order = continuity_order,
+			)
+
+			cell_node_map = create_node_map(standard_cell, global_node_counter)
+			global_node_counter += length(cell_node_map)
+
+			neighbors = Dict{Symbol, Int}()
+			for d in 1:N
+				if multi_idx[d] == 1
+					neighbors[Symbol("dim$(d)_neg")] = -1  # Boundary
+				else
+					neighbors[Symbol("dim$(d)_neg")] =
+						cell_id -
+						level_num_cells_vec[d]^(d - 1)
+				end
+				if multi_idx[d] == level_num_cells_vec[d]
+					neighbors[Symbol("dim$(d)_pos")] = -1  # Boundary
+				else
+					neighbors[Symbol("dim$(d)_pos")] =
+						cell_id +
+						level_num_cells_vec[d]^(d - 1)
+				end
+			end
+
+			# Convert StandardKSCell properties to KSCell properties
+			cell_instance = KSCell{T, N}(
+				cell_id,                # id
+				p_vec,                 # p
+				level,                 # level
+				continuity_order,      # continuity_order
+				(p_vec, level),       # standard_cell_key
+				neighbors,            # neighbors
+				cell_node_map,        # node_map
+				mask,                 # tensor_product_mask
+				Dict{Symbol, Int}(),  # boundary_connectivity
+				zero(T),             # error_estimate
+				zero(T),             # legendre_decay_rate
+				true,                # is_leaf
+				is_fictitious,       # is_fictitious
+				nothing,             # refinement_options
+				nothing,              # parent_id
+				nothing,              # child_ids
+			)
+
+			push!(cells, cell_instance)
+
+			for (local_idx, global_idx) in cell_node_map
+				node_map[(cell_id, local_idx)] = global_idx
+			end
+
+			if is_boundary
+				for d in 1:N
+					if multi_idx[d] == 1
+						side = Symbol("left_dim_$d")
+						boundary_cells[side] = get(boundary_cells, side, Int[])
+						push!(boundary_cells[side], cell_id)
+					elseif multi_idx[d] == level_num_cells_vec[d]
+						side = Symbol("right_dim_$d")
+						boundary_cells[side] = get(boundary_cells, side, Int[])
+						push!(boundary_cells[side], cell_id)
+					end
+				end
+			end
+
+			cell_id += 1
+		end
+	end
+
+	mesh = KSMesh(;
+		cells = cells,
+		global_error_estimate = zero(T),
+		boundary_cells = boundary_cells,
+		physical_domain = x -> true,
+	)
+
+	return mesh
+end
+@doc raw"""
+	derivative_matrix_nd(polynomial_degree::AbstractVector{Int}, dim::Int, k_max::Union{Int, AbstractVector{Int}}) -> Vector{Matrix{Float64}}
+
+Compute the multi-dimensional derivative matrices for given polynomial degrees and
+dimensions.
+
+# Arguments
+- `polynomial_degree::AbstractVector{Int}`: Polynomial degrees for each dimension.
+- `dim::Int`: Number of dimensions.
+- `k_max::Union{Int, AbstractVector{Int}}`: Maximum derivative order for each dimension.
+
+# Returns
+- `Vector{Matrix{Float64}}`: Vector of derivative matrices for each dimension.
+
+# Throws
+- `ArgumentError`: If the dimension does not match the number of polynomial degrees.
+
+# Mathematical Description
+The derivative matrices are computed for each dimension separately. For each dimension \( d
+\), the kth derivative matrix \( D^{(k)} \) is computed using the function
+`kth_derivative_matrix!`.
+
+The kth derivative matrix \( D^{(k)} \) is computed iteratively using the first derivative
+matrix \( D \): \[ D^{(k)} = (D^{(k-1)}) \cdot D \]
+
+# Logical Operations
+- Check if the dimension matches the number of polynomial degrees: \[ \text{if} \quad
+  \text{dim} \neq \text{length}(\text{polynomial\_degree}) \quad \text{throw} \quad
+  \text{ArgumentError} \]
+- Initialize the derivative matrices: \[ \text{derivative\_matrices} =
+  [\text{Vector{Matrix}}(\text{undef}, \text{k\_max}[d]) \quad \text{for} \quad d \quad
+  \text{in} \quad 1:\text{dim}] \]
+- Compute the kth derivative matrices for each dimension: \[ \text{for} \quad d \quad
+  \text{in} \quad 1:\text{dim} \] \[ \quad \text{nodes\_d} = \text{polynomial\_degree}[d] \]
+  \[ \quad \text{kth\_matrices} = \text{kth\_derivative\_matrix!}(\text{nodes\_d},
+  \text{k\_max}[d]) \] \[ \quad \text{derivative\_matrices}[d] = \text{kth\_matrices}[1]
+  \quad \text{Use the matrices with boundary} \]
+"""
+function derivative_matrix_nd(
+	polynomial_degree::AbstractVector{Int},
+	dim::Int,
+	k_max::Union{Int, AbstractVector{Int}},
+)
+	dim == length(polynomial_degree) || throw(
+		ArgumentError(
+			"Dimension 'dim' must match the number of dimensions in 'polynomial_degree'."
+		),
+	)
+	k_max = isa(k_max, Int) ? fill(k_max, dim) : k_max
+
+	derivative_matrices = [Vector{Matrix}(undef, k_max[d]) for d in 1:dim]
+	for d in 1:dim
+		nodes_d = polynomial_degree[d]
+		kth_matrices = kth_derivative_matrix!(nodes_d, k_max[d])
+		derivative_matrices[d] = kth_matrices[1]  # Use the matrices with boundary
+	end
+
+	return derivative_matrices
+end
+@doc raw"""
+	compute_quadrature_weight(mesh::KSMesh{T, N}, global_idx::Int) where {T <: Number, N} -> T
+
+Compute the quadrature weight for a given global node index in the mesh.
+
+# Arguments
+- `mesh::KSMesh{T, N}`: The mesh containing the cells.
+- `global_idx::Int`: The global node index.
+
+# Returns
+- `T`: The quadrature weight for the given global node index.
+
+# Throws
+- `ArgumentError`: If the global node index is not found in any cell's node map.
+
+# Mathematical Description
+The quadrature weight \( w \) for a given global node index is determined by iterating
+through the cells in the mesh and finding the corresponding local node index. The quadrature
+weight is then retrieved from the cell's spectral properties.
+
+# Logical Operations
+- Iterate over each cell in the mesh: \[ \text{for each cell in mesh.cells} \]
+- Iterate over the node map of the cell to find the global node index: \[ \text{for each
+  (local_coords, g_idx) in cell.node_map} \] \[ \quad \text{if} \quad g_idx == global_idx \]
+  \[ \quad \quad \text{for each (local_idx, node_g_idx) in enumerate(values(cell.node_map))}
+  \] \[ \quad \quad \quad \text{if} \quad node_g_idx == g_idx \] \[ \quad \quad \quad \quad
+  \text{return} \quad cell.spectral_properties.quadrature_weights[local_idx] \]
+- Throw an error if the global node index is not found: \[ \text{throw} \quad
+  \text{ArgumentError("Global node index $global_idx not found in any cell's node_map.")} \]
+"""
+function compute_quadrature_weight(
+	mesh::KSMesh{T, N}, global_idx::Int) where {T <: Number, N}
+	for cell in mesh.cells
+		for (local_coords, g_idx) in cell.node_map
+			if g_idx == global_idx
+				# Get standard cell from cache using the cell's standard_cell_key
+				standard_cell = get_or_create_standard_cell(cell.standard_cell_key...)
+
+				# Find corresponding weight index
+				for (local_idx, node_g_idx) in enumerate(values(cell.node_map))
+					if node_g_idx == g_idx
+						# Return quadrature weight from standard cell
+						return standard_cell.weights_with_boundary[1][local_idx]
+					end
+				end
 			end
 		end
-
-		# Create the element and add it to the elements vector
-		element = KSElement(length(elements) + 1,
-							1,
-							NTuple{dims, Int}(poly_degree_vec))
-		push!(elements, element)
-
-		# Corrected creation of the location matrix
-		push!(location_matrices, Dict(i => idx for (i, idx) in enumerate(node_indices)))
-
-		# Create tensor product mask for the current element as a 3D BitArray
-		num_nodes_per_dim = poly_degree_vec .+ 1
-		mask = BitArray(undef, num_nodes_per_dim...)
-		fill!(mask, true)
-		push!(tensor_product_masks, mask)
 	end
-
-	# Create and return a KSMesh with global nodes, tensor product masks, and location matrices
-	return KSMesh(elements, tensor_product_masks, location_matrices, zero(T))
+	throw(ArgumentError("Global node index $global_idx not found in any cell's node_map."))
 end
 
-"""
-	get_coordinate_range(coord_system::AbstractKSCoordinateSystem, dim_index::Int) -> Union{Tuple{T, T}, Nothing} where T
+function compute_quadrature_weight(
+	cell_key::Tuple{NTuple{N, Int}, Int},
+	quad_point::CartesianIndex) where N
 
-Retrieve the coordinate range for a given dimension index from the provided coordinate system.
+	# Get standard cell to access weights
+	standard_cell = get_or_create_standard_cell(cell_key...)
+
+	# Compute tensor product weight
+	weight = one(eltype(standard_cell.weights_with_boundary[1]))
+	for d in 1:N
+		idx = quad_point[d]
+		if idx <= length(standard_cell.weights_with_boundary[d])
+			weight *= standard_cell.weights_with_boundary[d][idx]
+		end
+	end
+
+	return weight
+end
+@doc raw"""
+	get_node_coordinates(coord_system::KSCartesianCoordinates{T, N}, cell::KSCell{T, N}, node_index::NTuple{N, Int}) where {T <: Real, N} -> NTuple{N, T}
+
+Get the coordinates of a node within a cell.
 
 # Arguments
-- `coord_system::AbstractKSCoordinateSystem`: The coordinate system from which to extract the range.
-  Supported types include `KSCartesianCoordinates`, `KSPolarCoordinates`, `KSCylindricalCoordinates`, and `KSSphericalCoordinates`.
-- `dim_index::Int`: The index of the dimension for which to retrieve the range. This index is 1-based.
+- `coord_system::KSCartesianCoordinates{T, N}`: The Cartesian coordinate system.
+- `cell::KSCell{T, N}`: The cell containing the node.
+- `node_index::NTuple{N, Int}`: The multi-dimensional index of the node within the cell.
 
 # Returns
-- `Union{Tuple{T, T}, Nothing}`: A tuple representing the range `[min, max]` of the specified dimension in the coordinate system.
-  Returns `nothing` if the coordinate system or dimension index does not define a range.
+- `NTuple{N, T}`: The coordinates of the node.
 
-# Supported Coordinate Systems
-- `KSCartesianCoordinates`:
-  - Uses `ranges` field and returns the range for the specified `dim_index`.
-- `KSPolarCoordinates`:
-  - `dim_index == 1`: Returns the radial range `r`.
-  - `dim_index == 2`: Returns the angular range `theta`.
-  - Throws an `ArgumentError` if `dim_index` is not 1 or 2.
-- `KSCylindricalCoordinates`:
-  - `dim_index == 1`: Returns the radial range `r`.
-  - `dim_index == 2`: Returns the angular range `theta`.
-  - `dim_index == 3`: Returns the height range `z`.
-  - Throws an `ArgumentError` if `dim_index` is not 1, 2, or 3.
-- `KSSphericalCoordinates`:
-  - `dim_index == 1`: Returns the radial range `r`.
-  - `dim_index == 2`: Returns the azimuthal angle range `theta`.
-  - `dim_index == 3`: Returns the polar angle range `phi`.
-  - Throws an `ArgumentError` if `dim_index` is not 1, 2, or 3.
+# Mathematical Description
+The coordinates of a node within a cell are determined by the cell's position in the mesh and
+the node's position within the cell. The steps are:
+1. Calculate the number of cells per dimension.
+2. Determine the cell's multi-dimensional index based on its ID.
+3. Calculate the cell size in each dimension.
+4. Calculate the start coordinates of the cell.
+5. Calculate the node coordinates within the cell.
 
-# Errors
-- Throws `ArgumentError` if the coordinate system or dimension index is unsupported, or if `dim_index` is out of bounds for the given coordinate system.
-
-# Example
-```julia
-# Example usage with Cartesian coordinates
-cartesian = KSCartesianCoordinates{Float64, 3}(((0.0, 1.0), (0.0, 1.0), (0.0, 1.0)))
-range_x = get_coordinate_range(cartesian, 1)  # returns (0.0, 1.0)
-
-# Example usage with Polar coordinates
-polar = KSPolarCoordinates{Float64}((0.0, 1.0), (0.0, 2π))
-range_r = get_coordinate_range(polar, 1)  # returns (0.0, 1.0)
-range_theta = get_coordinate_range(polar, 2)  # returns (0.0, 2π)
-
-# Example usage with Cylindrical coordinates
-cylindrical = KSCylindricalCoordinates{Float64}((0.0, 1.0), (0.0, 2π), (0.0, 10.0))
-range_r = get_coordinate_range(cylindrical, 1)  # returns (0.0, 1.0)
-range_theta = get_coordinate_range(cylindrical, 2)  # returns (0.0, 2π)
-range_z = get_coordinate_range(cylindrical, 3)  # returns (0.0, 10.0)
-
-# Example usage with Spherical coordinates
-spherical = KSSphericalCoordinates{Float64}((0.0, 1.0), (0.0, 2π), (0.0, π))
-range_r = get_coordinate_range(spherical, 1)  # returns (0.0, 1.0)
-range_theta = get_coordinate_range(spherical, 2)  # returns (0.0, 2π)
-range_phi = get_coordinate_range(spherical, 3)  # returns (0.0, π)
+# Logical Operations
+- Calculate the number of cells per dimension: \[ \text{num\_cells\_per\_dim} =
+  \text{coord\_system.num\_cells} \]
+- Determine the cell's multi-dimensional index: \[ \text{multi\_idx} = \text{ntuple}(d
+  \rightarrow \text{div}(\text{rem}(cell.id - 1,
+  \text{prod}(\text{num\_cells\_per\_dim}[1:d])),
+  \text{prod}(\text{num\_cells\_per\_dim}[1:(d - 1)])) + 1, N) \]
+- Calculate the cell size in each dimension: \[ \text{cell\_sizes} = \text{ntuple}(d
+  \rightarrow (\text{cell\_corners}[d][2] - \text{cell\_corners}[d][1]) /
+  \text{num\_cells\_per\_dim}[d], N) \]
+- Calculate the start coordinates of the cell: \[ \text{cell\_start} = \text{ntuple}(d
+  \rightarrow \text{coord\_system.domains}[d][1] + (\text{multi\_idx}[d] - 1) *
+  \text{cell\_sizes}[d], N) \]
+- Calculate the node coordinates within the cell: \[ \text{node\_coords} = \text{ntuple}(d
+  \rightarrow \text{cell\_start}[d] + (\text{node\_index}[d] - 1) * \text{cell\_sizes}[d] /
+  (p[d] + 1), N) \]
 """
-
-# Helper function to extract range based on coordinate system and dimension index
-function get_coordinate_range(coord_system::AbstractKSCoordinateSystem, dim_index::Int)
-	if isa(coord_system, KSCartesianCoordinates)
-		return coord_system.ranges[dim_index]
-	elseif isa(coord_system, KSPolarCoordinates)
-		if dim_index == 1
-			return coord_system.r
-		elseif dim_index == 2
-			return coord_system.theta
-		else
-			throw(ArgumentError("Invalid dimension index $dim_index for Polar Coordinates"))
-		end
-	elseif isa(coord_system, KSCylindricalCoordinates)
-		if dim_index == 1
-			return coord_system.r
-		elseif dim_index == 2
-			return coord_system.theta
-		elseif dim_index == 3
-			return coord_system.z
-		else
-			throw(ArgumentError("Invalid dimension index $dim_index for Cylindrical Coordinates"))
-		end
-	elseif isa(coord_system, KSSphericalCoordinates)
-		if dim_index == 1
-			return coord_system.r
-		elseif dim_index == 2
-			return coord_system.theta
-		elseif dim_index == 3
-			return coord_system.phi
-		else
-			throw(ArgumentError("Invalid dimension index $dim_index for Spherical Coordinates"))
-		end
+function get_node_coordinates(
+	coord_system::KSCartesianCoordinates{T, N},
+	cell::KSCell{T, N},
+	point_or_index::Union{AbstractVector{T}, NTuple{N, T}, Tuple},
+	p_or_num_cells::NTuple{N, Int}) where {T, N}
+	# Calculate cell position based on cell ID
+	cell_position = if N == 1
+		(cell.id,)
 	else
-		throw(ArgumentError("Unsupported coordinate system type $(typeof(coord_system))"))
+		ntuple(d -> begin
+				denominator = 1
+				for i in 1:(d - 1)
+					denominator *= (cell.p[i] + 2)
+				end
+				div((cell.id - 1), denominator) % (cell.p[d] + 2)
+			end, N)
 	end
+
+	# Convert point to tuple if it's a vector
+	point_tuple =
+		isa(point_or_index, AbstractVector) ? tuple(point_or_index...) : point_or_index
+
+	# Calculate cell start coordinates
+	cell_start = ntuple(
+		d -> begin
+			domain_size = coord_system.domains[d][2] - coord_system.domains[d][1]
+			coord_system.domains[d][1] +
+			cell_position[d] * domain_size / (p_or_num_cells[d] + 2)
+		end, N)
+
+	# If point_or_index is a node index, calculate node coordinates
+	if length(point_tuple) == N && all(x -> isa(x, Integer), point_tuple)
+		cell_size = ntuple(
+			d -> begin
+				domain_size = coord_system.domains[d][2] - coord_system.domains[d][1]
+				domain_size / (p_or_num_cells[d] + 2)
+			end, N)
+
+		return ntuple(
+			d ->
+				cell_start[d] +
+				(point_tuple[d] - 1) * cell_size[d] / (p_or_num_cells[d] + 1),
+			N,
+		)
+	end
+
+	# If point_or_index is a point, return it as is
+	return point_tuple
 end
+function get_node_coordinates(
+	coord_system::KSCartesianCoordinates{T, N},
+	cell::KSCell{T, N},
+	point::AbstractVector{T},
+	num_cells::NTuple{N, Int},
+) where {T, N}
+	# Calculate cell indices
+	cell_indices = ntuple(
+		d -> begin
+			# Use proper cell indexing based on cell ID
+			idx = div(cell.id - 1, prod(num_cells[1:(d - 1)])) % num_cells[d] + 1
+			idx
+		end, N)
 
-"""
-	map_nodes_to_physical_domain(nodes::Vector{T}, coord_system::AbstractKSCoordinateSystem, dim_index::Int) -> Vector{T} where T
+	# Calculate cell sizes
+	cell_sizes = ntuple(
+		d -> begin
+			domain_size = coord_system.domains[d][2] - coord_system.domains[d][1]
+			domain_size / num_cells[d]
+		end, N)
 
-Maps a set of reference element nodes to their corresponding positions in the physical domain based on the provided coordinate system and dimension index.
+	# Calculate cell bounds
+	cell_starts = ntuple(
+		d -> begin
+			coord_system.domains[d][1] + (cell_indices[d] - 1) * cell_sizes[d]
+		end, N)
+
+	cell_ends = ntuple(d -> cell_starts[d] + cell_sizes[d], N)
+
+	# Map point to reference coordinates [-1, 1]
+	reference_coords = ntuple(
+		d -> begin
+			# Linear mapping from physical to reference coordinates
+			2.0 * (point[d] - cell_starts[d]) / cell_sizes[d] - 1.0
+		end, N)
+
+	return reference_coords
+end
+@doc raw"""
+	interpolate_in_cell(cell::KSCell{T, N}, u::AbstractVector{T}, point::NTuple{N, T}, mesh::KSMesh{T, N}) where {T <: Real, N} -> T
+
+Interpolate the solution at a given point within a cell.
 
 # Arguments
-- `nodes::Vector{T}`: A vector of nodes in the reference element, typically within a standard interval like `[-1, 1]` or `[0, 1]`.
-- `coord_system::AbstractKSCoordinateSystem`: The coordinate system used to map the reference nodes to the physical domain. Supported types include `KSCartesianCoordinates`, `KSPolarCoordinates`, `KSCylindricalCoordinates`, and `KSSphericalCoordinates`.
-- `dim_index::Int`: The dimension index indicating which physical dimension the nodes should be mapped to.
+- `cell::KSCell{T, N}`: The cell containing the solution.
+- `u::AbstractVector{T}`: Vector of solution values at the cell nodes.
+- `point::NTuple{N, T}`: The point at which to interpolate.
+- `mesh::KSMesh{T, N}`: The mesh containing the cell.
 
 # Returns
-- `Vector{T}`: A vector of the same type `T`, where each entry represents the mapped position of the corresponding reference node in the physical domain for the specified dimension.
+- `T`: Interpolated value at the given point.
 
-# Description
-The function takes nodes in the reference element and maps them to their corresponding positions in the physical domain using the provided coordinate system. The `dim_index` specifies which dimension of the physical domain the nodes should be mapped to. This is particularly useful in finite element methods where you need to transform local (reference) coordinates to global (physical) coordinates.
-
-# Example
-```julia
-# Example usage with Cartesian coordinates
-nodes = [-1.0, 0.0, 1.0]  # Reference element nodes
-cartesian = KSCartesianCoordinates{Float64, 2}(((0.0, 1.0), (0.0, 1.0)))
-mapped_nodes_x = map_nodes_to_physical_domain(nodes, cartesian, 1)  # Maps to the x-dimension
-mapped_nodes_y = map_nodes_to_physical_domain(nodes, cartesian, 2)  # Maps to the y-dimension
-```
-
-# Notes
-- The function uses `map_from_reference_element`, which is assumed to map a pair of reference nodes to their corresponding physical positions in a tuple form. The `dim_index` is used to extract the relevant dimension from the tuple.
-- Ensure that `map_from_reference_element` correctly handles the mapping for the provided `coord_system` and that the tuple passed to it contains the correct number of elements.
-
-# Errors
-- Throws an `ArgumentError` if the `dim_index` is out of bounds or the coordinate system does not support the requested dimension.
+# Mathematical Description
+The interpolation is performed using barycentric interpolation within the standard cell. The
+- Reshape the solution values to match the standard cell structure: \[ \text{cell\_values} =
+  \text{reshape}(@\text{view}(\text{u}[\text{collect}(\text{values}(\text{cell.node_map}))]),
+  \text{ntuple}(i \rightarrow \text{cell.p}[i] + 2, N)) \]
+- Perform the interpolation using the `interpolate_nd` function: \[ \text{result} =
+  \text{interpolate_nd}(\text{standard\_cell}, \text{cell\_values}, \text{local\_coords}) \]
 """
+function interpolate_in_cell(
+	cell::KSCell{T, N},
+	u::AbstractVector{T},
+	point::NTuple{N, T},
+	mesh::KSMesh{T, N},
+) where {T, N}
+	standard_cell = get_or_create_standard_cell(
+		cell.p,
+		cell.level;
+		continuity_order = cell.continuity_order,
+	)
+	local_coords = get_node_coordinates(
+		mesh.coord_system, cell, point, mesh.num_cells_per_dim
+	)
+	cell_values = reshape(
+		@view(u[collect(values(cell.node_map))]), ntuple(i -> cell.p[i] + 2, N))
+	return interpolate_nd(standard_cell, cell_values, local_coords)
+end
 
-# Helper function to map nodes from reference to physical domain
-function map_nodes_to_physical_domain(nodes::Vector{T}, coord_system::AbstractKSCoordinateSystem, dim_index::Int) where T
-	mapped_nodes = T[]
-	for node in nodes
-		mapped_node = map_from_reference_element((node, node), coord_system)  # Ensure the tuple has 2 elements
-		push!(mapped_nodes, mapped_node[dim_index])
-	end
-	return mapped_nodes
+# Fix get_node_coordinates to handle both mesh and node inputs
+function get_node_coordinates(node_idx::Int, mesh::KSMesh{T,N}) where {T,N}
+    # Find cell containing this node
+    for cell in mesh.cells
+        if haskey(cell.node_map, node_idx)
+            # Get the standard cell
+            std_cell = get_or_create_standard_cell(cell.standard_cell_key...)
+
+            # Get local coordinates
+            local_coords = findfirst(==(node_idx), values(cell.node_map))
+
+            # Map to physical coordinates
+            return get_node_coordinates(mesh.coord_system, cell, local_coords, mesh.num_cells_per_dim)
+        end
+    end
+    throw(ArgumentError("Node index $node_idx not found in mesh"))
+end
+
+# Add function to get boundary nodes from mesh
+function get_boundary_nodes(mesh::KSMesh{T,N}) where {T,N}
+    boundary_nodes = Set{Int}()
+    for (side, cells) in mesh.boundary_cells
+        for cell_id in cells
+            cell = mesh.cells[cell_id]
+            # Add nodes from boundary side
+            for (local_idx, global_idx) in cell.node_map
+                if is_boundary_node(local_idx, side, cell.p)
+                    push!(boundary_nodes, global_idx)
+                end
+            end
+        end
+    end
+    return sort(collect(boundary_nodes))
+end
+
+function is_boundary_node(local_idx::NTuple{N,Int}, side::Symbol, p::NTuple{N,Int}) where N
+    dim, direction = parse_direction(side)
+    return direction == :pos ? local_idx[dim] == p[dim] + 2 : local_idx[dim] == 1
 end
 
 end # module SpectralMethods
