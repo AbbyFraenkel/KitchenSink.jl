@@ -1,22 +1,41 @@
 name: CI
+
 on:
-  pull_request:
-    branches:
-      - main
   push:
     branches:
       - main
-    tags: '*'
+  pull_request:
+    branches:
+      - main
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
     - name: Set up Julia
       uses: julia-actions/setup-julia@v1
-    - name: Install dependencies
+      with:
+        version: '1.10'
+
+    - name: Install Dependencies
       run: julia -e 'using Pkg; Pkg.instantiate()'
-    - name: Run tests
-      run: julia -e 'using Pkg; Pkg.test()'
+
+    - name: Run Tests
+      run: julia -e 'using Pkg; Pkg.activate("."); Pkg.test()'
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v2
+      with:
+        node-version: '16'
+
+    - name: Install semantic-release
+      run: npm install -g semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github
+
+    - name: Run semantic-release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: semantic-release

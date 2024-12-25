@@ -1,17 +1,13 @@
 name-template: 'v$NEXT_PATCH_VERSION'
 tag-template: 'v$NEXT_PATCH_VERSION'
-draft: true
 categories:
-  - title: "New Features"
-    labels: ["feature", "enhancement"]
-  - title: "Bug Fixes"
-    labels: ["bug", "fix"]
-  - title: "Maintenance"
-    labels: ["chore", "maintenance"]
-  - title: "Documentation"
-    labels: ["documentation"]
+  - title: 'New Features'
+    labels:
+      - 'feature'
+  - title: ' Bug Fixes'
+    labels:
+      - 'bug'
 change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
 template: |
-  ## What's Changed
-
+  ## Changes
   $CHANGES
